@@ -24,7 +24,6 @@ const CYCLEPERIOD  : u32 = 666;   // Stimulation period in ms
 const SECONDSOUTPUT: u32 = 60;     // Duration of output wav
 const RANDOMSEED   : u64 = 3;      // Seed to contract random pattern generation
 
-
 type  AtomSeq = [u8; CHANNELS as usize];
 
 struct SeqGen {
