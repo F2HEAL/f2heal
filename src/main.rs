@@ -21,8 +21,8 @@ const STIMFREQ     : u32 = 250;    // Stimulation frequency in Hz
 const STIMPERIOD   : u32 = 100;    // Stimulation period of single channel in ms
 const CYCLEPERIOD  : u32 = 666;   // Stimulation period in ms
 
-const SECONDSOUTPUT: u32 = 900;     // Duration of output wav
-const RANDOMSEED   : u64 = 3;      // Seed to contract random pattern generation
+const SECONDSOUTPUT: u32 = 90;     // Duration of output wav
+const RANDOMSEED   : u64 = 4;      // Seed to contract random pattern generation
 
 type  AtomSeq = [u8; CHANNELS as usize];
 
@@ -38,7 +38,7 @@ impl SeqGen {
 
         let mut seq : [Vec<AtomSeq>;2 ] = [ Vec::new() ,  Vec::new() ];
 
-        for h in 0..1 {
+        for h in 0..2 {
             for _ in 0..RANDPATTERNS {
                 let mut nums : AtomSeq = [0; CHANNELS as usize];
                 for i in 0..CHANNELS {  //todo: improve this
@@ -100,7 +100,7 @@ fn main() {
     let mut seq1 = SeqGen::new();
 
     println!("Generating {} random patterns:", RANDPATTERNS);
-    for hand in 0..1 {
+    for hand in 0..2 {
         for xs in seq1.fseq[hand].iter() {
             println!("Array {} {:?}", hand, xs);
         }
@@ -115,7 +115,7 @@ fn main() {
 
     // setup wav stream
     let wavspec = hound::WavSpec {
-        channels: CHANNELS,
+        channels: 2*CHANNELS,
         sample_rate: SAMPLERATE,
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,
@@ -127,8 +127,8 @@ fn main() {
     let samples_to_go = SECONDSOUTPUT * SAMPLERATE;
 
     for _ in 0..samples_to_go {
-        for channel in 0..CHANNELS {
-            for hand in 0..1 {
+        for hand in 0..2 {  
+            for channel in 0..CHANNELS {
                 let sample = seq1.sample(hand, channel as u8);
                 let amplitude = i16::MAX as f64;
                 
