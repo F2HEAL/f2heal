@@ -14,114 +14,114 @@ use hound;
 // const STIMPERIOD   : u32 = 100;    // Stimulation period of single channel in ms
 // const CYCLEPERIOD  : u32 = 666;    // Stimulation period in ms
 
-const SAMPLERATE   : u32 = 44100;
-const CHANNELS     : u16 = 4;      // = #fingers
-const RANDPATTERNS : u8  = 20;     // number of patterns before cycle
-const STIMFREQ     : u32 = 250;    // Stimulation frequency in Hz
-const STIMPERIOD   : u32 = 100;    // Stimulation period of single channel in ms
-const CYCLEPERIOD  : u32 = 666;   // Stimulation period in ms
+const SAMPLERATE   : i64 = 44100;
+const CHANNELS     : i64 = 4;      // = #fingers
+const STIMFREQ     : i64 = 250;    // Stimulation frequency in Hz
+const STIMPERIOD   : i64 = 100;    // Stimulation period of single channel in ms
+const CYCLEPERIOD  : i64 = 666;   // Stimulation period in ms
 
-const PAUZES       : [i32; 8] = [ 3, 4, 8, 9, 13, 14, 18, 19 ];
+//const PAUZES       : [i32; 8] = [ 3, 4, 8, 9, 13, 14, 18, 19 ];
 
-const SECONDSOUTPUT: u32 = 7200;   // Duration of output wav
+const SECONDSOUTPUT: i64 = 90;   // Duration of output wav
 const RANDOMSEED   : u64 = 4;      // Seed to contract random pattern generation
 
-type  AtomSeq = [u8; CHANNELS as usize];
+type  AtomSeq = [i64; CHANNELS as usize];
 
 struct SeqGen {
-    currsample : u32,
-    fseq : [ Vec<AtomSeq>; 2],
+    rng: ChaCha8Rng,
+    sample : i64,
+    cycle: i64,
+    cyclestart: i64,
+    channelorder : [ AtomSeq; 2],
 }
 
 impl SeqGen {
     fn new() -> SeqGen {
         //let mut rng = rand::thread_rng();
-        let mut rng = ChaCha8Rng::seed_from_u64(RANDOMSEED);
+        let new_rng = ChaCha8Rng::seed_from_u64(RANDOMSEED);
 
-        let mut seq : [Vec<AtomSeq>;2 ] = [ Vec::new() ,  Vec::new() ];
+        let seq = [ [0; 4], [0; 4] ];
+        
+        SeqGen { rng: new_rng, sample : 0, cycle: i64::MAX, cyclestart: 0, channelorder : seq }
+    }
 
+    fn gen_channelorder(&mut self) {
         for h in 0..2 {
-            for p in 0..RANDPATTERNS as i32 {
-                let mut nums : AtomSeq = [u8::MAX; CHANNELS as usize];
-
-                if !PAUZES.contains(&p) {
-                    for i in 0..CHANNELS {  //todo: improve this
-                        nums[i as usize] = i as u8;
-                    }
-                    nums.shuffle(&mut rng);
-                }
-
-                seq[h].push(nums);
+            let mut nums : AtomSeq = [i64::MAX; CHANNELS as usize];
+            
+            for i in 0..CHANNELS{
+                nums[i as usize] =  i;
             }
+
+            nums.shuffle(&mut self.rng);
+
+            self.channelorder[h] = nums;
         }
 
-        SeqGen { currsample : 0, fseq : seq }
     }
+
+
 
     fn next_sample(&mut self) {
-        self.currsample += 1;
+        self.sample += 1;
     }
 
-    fn sample(&self, hand: usize, channel: u8) -> f64 {
-        //let currtime = self.currsample as f64 / SAMPLERATE as f64; //where are we in seconds time?
+    fn curr_cycle(&mut self) -> i64{
+        ( self.sample * 1_000 / SAMPLERATE  / CYCLEPERIOD ) % CHANNELS
+    }
 
 
-        // which is the current cycle we're running in? (don't wrap yet at RANDPATTERNS as we 
-        // need the relative sample within the cycle, see below)
-        let currcycle = (self.currsample as f64 / SAMPLERATE as f64 * 1000.0 / CYCLEPERIOD as f64) as u32; 
-        let currcycle_order = currcycle % RANDPATTERNS as u32; // wrap at RANDPATTERNS for knowing which cycle-pattern to sellect
+    fn sample(&mut self, hand: usize, channel: i64) -> f64 {
+        if self.curr_cycle() < self.cycle  {
+            // we went back to cycle 0:
+            //  - generate new random pattern for both hands
 
-        // how many samples far in the current cycle are we?
-        let cycle_sample = self.currsample - currcycle * ( SAMPLERATE * CYCLEPERIOD / 1000);
+            self.gen_channelorder();
+        }
 
-        // which channel# should be playing now?
-        let currchan_order = (CHANNELS as f64 * cycle_sample as f64 / ( SAMPLERATE as f64* CYCLEPERIOD  as f64/ 1000.0)) as u32;
-        let currchan_order = if currchan_order >= CHANNELS.into() { (CHANNELS - 1) as u32 } else { currchan_order as u32 };  // squash rounding error
+        if self.curr_cycle() != self.cycle {
+            // cycle changed:
+            //  - set cyclestart
+            self.cyclestart = self.sample;
+        }
+
+        self.cycle = self.curr_cycle();
+
+        let active_channel = self.channelorder[hand][self.cycle as usize];
+
+        if channel != active_channel {
+            return 0.0;
+        }
+
+        let cycle_active_time = STIMPERIOD * SAMPLERATE / 1000;
+
+        let rel_sample = self.sample - self.cyclestart; 
+
+        if rel_sample > cycle_active_time {
+            return 0.0;
+        }
+
+        (rel_sample as f64 * STIMFREQ as f64 * 2.0 * PI / SAMPLERATE as f64).sin()
 
 
+    } 
         
-        // randomize channel through selected order
-        let currchan = self.fseq[hand][currcycle_order as usize][currchan_order as usize] as u32;
-
-        if u32::from(channel) != currchan { //another channel is active currently
-            return 0.0;
-        }
-
-        let chan_sample = cycle_sample - currchan_order * ( SAMPLERATE * CYCLEPERIOD / ( CHANNELS as u32 * 1000)); // relative sample number whitin current channel
-
-        let chansim_active = chan_sample < (STIMPERIOD * SAMPLERATE / 1000);
-
-        //println!("sample #{} is in cycle {} at chan {}, active {} chansample #{} with value {} at {} sec ", self.currsample, currcycle, currchan, chansim_active, chan_sample, (chan_sample as f64 * STIMFREQ as f64 * 2.0 * PI).sin(), currtime,);
-
-        if !chansim_active { //we're in the active channel, but the STIMPERIOD has passed already
-            return 0.0;
-        }
-
-        (chan_sample as f64 * STIMFREQ as f64 * 2.0 * PI / SAMPLERATE as f64).sin()
-    }
 }
 
 fn main() {
     let mut seq1 = SeqGen::new();
 
-    println!("Generating {} random patterns:", RANDPATTERNS);
-    for hand in 0..2 {
-        for xs in seq1.fseq[hand].iter() {
-            println!("Array {} {:?}", hand, xs);
-        }
-    }
-
     //set filename with all parameters included
-    let fname = "output/sine-2hands-pauzed-".to_string() + &CHANNELS.to_string() + &"chan-".to_string() 
-        + &RANDPATTERNS.to_string() + &"patterns-".to_string() + &STIMFREQ.to_string() + &"SFREQ-".to_string() + &STIMPERIOD.to_string() 
+    let fname = "output/sine-2hands-".to_string() + &CHANNELS.to_string() + &"chan-".to_string() 
+        + &STIMFREQ.to_string() + &"SFREQ-".to_string() + &STIMPERIOD.to_string() 
         + &"SPER-".to_string() + &CYCLEPERIOD.to_string() + &"CPER-WAV".to_string() + &SAMPLERATE.to_string() + &"Hz-16bit-signed.wav".to_string();    
 
     println!("\nWriting {}sec output to: {}", SECONDSOUTPUT, fname);
 
     // setup wav stream
     let wavspec = hound::WavSpec {
-        channels: 2*CHANNELS,
-        sample_rate: SAMPLERATE,
+        channels: 2*CHANNELS as u16,
+        sample_rate: SAMPLERATE as u32,
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,
     };
@@ -129,15 +129,15 @@ fn main() {
     
     
 
-    let samples_to_go = SECONDSOUTPUT * SAMPLERATE;
+    let samples_to_go : i64 = SECONDSOUTPUT * SAMPLERATE;
 
     for _ in 0..samples_to_go {
         for hand in 0..2 {  
             for channel in 0..CHANNELS {
-                let sample = seq1.sample(hand, channel as u8);
+                let sample = seq1.sample(hand, channel);
                 let amplitude = i16::MAX as f64;
                 
-                //println!("Sample #{} a chan {} has value: {} with duration {}", seq1.currsample, channel, sample*amplitude, writer.duration());
+                //println!("Sample #{} a chan {} has value: {} with duration {}", seq1.sample, channel, sample*amplitude, writer.duration());
                 writer.write_sample((sample*amplitude) as i16).unwrap();
             }
         }
