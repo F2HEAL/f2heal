@@ -16,12 +16,14 @@ use hound;
 
 const SAMPLERATE   : u32 = 44100;
 const CHANNELS     : u16 = 4;      // = #fingers
-const RANDPATTERNS : u8  = 6;      // number of patterns before cycle
+const RANDPATTERNS : u8  = 20;     // number of patterns before cycle
 const STIMFREQ     : u32 = 250;    // Stimulation frequency in Hz
 const STIMPERIOD   : u32 = 100;    // Stimulation period of single channel in ms
 const CYCLEPERIOD  : u32 = 666;   // Stimulation period in ms
 
-const SECONDSOUTPUT: u32 = 90;     // Duration of output wav
+const PAUZES       : [i32; 8] = [ 3, 4, 8, 9, 13, 14, 18, 19 ];
+
+const SECONDSOUTPUT: u32 = 7200;   // Duration of output wav
 const RANDOMSEED   : u64 = 4;      // Seed to contract random pattern generation
 
 type  AtomSeq = [u8; CHANNELS as usize];
@@ -39,12 +41,15 @@ impl SeqGen {
         let mut seq : [Vec<AtomSeq>;2 ] = [ Vec::new() ,  Vec::new() ];
 
         for h in 0..2 {
-            for _ in 0..RANDPATTERNS {
-                let mut nums : AtomSeq = [0; CHANNELS as usize];
-                for i in 0..CHANNELS {  //todo: improve this
-                    nums[i as usize] = i as u8;
+            for p in 0..RANDPATTERNS as i32 {
+                let mut nums : AtomSeq = [u8::MAX; CHANNELS as usize];
+
+                if !PAUZES.contains(&p) {
+                    for i in 0..CHANNELS {  //todo: improve this
+                        nums[i as usize] = i as u8;
+                    }
+                    nums.shuffle(&mut rng);
                 }
-                nums.shuffle(&mut rng);
 
                 seq[h].push(nums);
             }
@@ -107,7 +112,7 @@ fn main() {
     }
 
     //set filename with all parameters included
-    let fname = "output/sine-2hands-".to_string() + &CHANNELS.to_string() + &"chan-".to_string() 
+    let fname = "output/sine-2hands-pauzed-".to_string() + &CHANNELS.to_string() + &"chan-".to_string() 
         + &RANDPATTERNS.to_string() + &"patterns-".to_string() + &STIMFREQ.to_string() + &"SFREQ-".to_string() + &STIMPERIOD.to_string() 
         + &"SPER-".to_string() + &CYCLEPERIOD.to_string() + &"CPER-WAV".to_string() + &SAMPLERATE.to_string() + &"Hz-16bit-signed.wav".to_string();    
 
