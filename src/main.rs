@@ -21,14 +21,14 @@ const STIMFREQ     : u32 = 250;    // Stimulation frequency in Hz
 const STIMPERIOD   : u32 = 100;    // Stimulation period of single channel in ms
 const CYCLEPERIOD  : u32 = 666;   // Stimulation period in ms
 
-const SECONDSOUTPUT: u32 = 60;     // Duration of output wav
+const SECONDSOUTPUT: u32 = 900;     // Duration of output wav
 const RANDOMSEED   : u64 = 3;      // Seed to contract random pattern generation
 
 type  AtomSeq = [u8; CHANNELS as usize];
 
 struct SeqGen {
     currsample : u32,
-    fseq : Vec<AtomSeq>,
+    fseq : [ Vec<AtomSeq>; 2],
 }
 
 impl SeqGen {
@@ -36,16 +36,18 @@ impl SeqGen {
         //let mut rng = rand::thread_rng();
         let mut rng = ChaCha8Rng::seed_from_u64(RANDOMSEED);
 
-        let mut seq : Vec<AtomSeq> = Vec::new();
+        let mut seq : [Vec<AtomSeq>;2 ] = [ Vec::new() ,  Vec::new() ];
 
-        for _ in 0..RANDPATTERNS {
-            let mut nums : AtomSeq = [0; CHANNELS as usize];
-            for i in 0..CHANNELS {  //todo: improve this
-                nums[i as usize] = i as u8;
+        for h in 0..1 {
+            for _ in 0..RANDPATTERNS {
+                let mut nums : AtomSeq = [0; CHANNELS as usize];
+                for i in 0..CHANNELS {  //todo: improve this
+                    nums[i as usize] = i as u8;
+                }
+                nums.shuffle(&mut rng);
+
+                seq[h].push(nums);
             }
-            nums.shuffle(&mut rng);
-
-            seq.push(nums);
         }
 
         SeqGen { currsample : 0, fseq : seq }
@@ -55,7 +57,7 @@ impl SeqGen {
         self.currsample += 1;
     }
 
-    fn sample(&self, channel: u8) -> f64 {
+    fn sample(&self, hand: usize, channel: u8) -> f64 {
         //let currtime = self.currsample as f64 / SAMPLERATE as f64; //where are we in seconds time?
 
 
@@ -72,8 +74,9 @@ impl SeqGen {
         let currchan_order = if currchan_order >= CHANNELS.into() { (CHANNELS - 1) as u32 } else { currchan_order as u32 };  // squash rounding error
 
 
+        
         // randomize channel through selected order
-        let currchan = self.fseq[currcycle_order as usize][currchan_order as usize] as u32;
+        let currchan = self.fseq[hand][currcycle_order as usize][currchan_order as usize] as u32;
 
         if u32::from(channel) != currchan { //another channel is active currently
             return 0.0;
@@ -97,12 +100,16 @@ fn main() {
     let mut seq1 = SeqGen::new();
 
     println!("Generating {} random patterns:", RANDPATTERNS);
-    for xs in seq1.fseq.iter() {
-        println!("Array {:?}", xs);
+    for hand in 0..1 {
+        for xs in seq1.fseq[hand].iter() {
+            println!("Array {} {:?}", hand, xs);
+        }
     }
 
     //set filename with all parameters included
-    let fname = "output/sine-".to_string() + &CHANNELS.to_string() + &"chan-".to_string() + &RANDPATTERNS.to_string() + &"patterns-".to_string() + &STIMFREQ.to_string() + &"SFREQ-".to_string() + &STIMPERIOD.to_string() + &"SPER-".to_string() + &CYCLEPERIOD.to_string() + &"CPER.wav".to_string();    
+    let fname = "output/sine-2hands-".to_string() + &CHANNELS.to_string() + &"chan-".to_string() 
+        + &RANDPATTERNS.to_string() + &"patterns-".to_string() + &STIMFREQ.to_string() + &"SFREQ-".to_string() + &STIMPERIOD.to_string() 
+        + &"SPER-".to_string() + &CYCLEPERIOD.to_string() + &"CPER-WAV".to_string() + &SAMPLERATE.to_string() + &"Hz-16bit-signed.wav".to_string();    
 
     println!("\nWriting {}sec output to: {}", SECONDSOUTPUT, fname);
 
@@ -121,11 +128,13 @@ fn main() {
 
     for _ in 0..samples_to_go {
         for channel in 0..CHANNELS {
-            let sample = seq1.sample(channel as u8);
-            let amplitude = i16::MAX as f64;
-            
-            //println!("Sample #{} a chan {} has value: {} with duration {}", seq1.currsample, channel, sample*amplitude, writer.duration());
-            writer.write_sample((sample*amplitude) as i16).unwrap();
+            for hand in 0..1 {
+                let sample = seq1.sample(hand, channel as u8);
+                let amplitude = i16::MAX as f64;
+                
+                //println!("Sample #{} a chan {} has value: {} with duration {}", seq1.currsample, channel, sample*amplitude, writer.duration());
+                writer.write_sample((sample*amplitude) as i16).unwrap();
+            }
         }
         seq1.next_sample(); 
     }
