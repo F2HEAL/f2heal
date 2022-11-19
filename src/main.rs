@@ -21,11 +21,10 @@ const STIMPERIOD   : i64 = 100;    // Stimulation period of single channel in ms
 const CYCLEPERIOD  : i64 = 666;   // Stimulation period in ms
 
 const PAUCYCLE     : i64 = 5;
-const PAUZES       : [i64; 2] = [4, 5]; 
+const PAUZES       : [i64; 2] = [3, 4]; 
+//const PAUZES       : [i64; 0] = [ ]; 
 
-//const PAUZES       : [i32; 8] = [ 3, 4, 8, 9, 13, 14, 18, 19 ];
-
-const SECONDSOUTPUT: i64 = 98;   // Duration of output wav
+const SECONDSOUTPUT: i64 = 7200;   // Duration of output wav
 const RANDOMSEED   : u64 = 4;      // Seed to contract random pattern generation
 
 type  AtomSeq = [i64; CHANNELS as usize];
@@ -48,20 +47,28 @@ impl SeqGen {
         SeqGen { rng: new_rng, sample : 0, cycle: i64::MAX, cyclestart: 0, channelorder : seq }
     }
 
+    // Generates new random pattern for each hand
     fn gen_channelorder(&mut self) {
         for h in 0..2 {
             let mut nums : AtomSeq = [i64::MAX; CHANNELS as usize];
             
-            for i in 0..CHANNELS{
-                nums[i as usize] =  i;
-            }
+            loop {
+                for i in 0..CHANNELS{
+                    nums[i as usize] =  i;
+                }
 
-            nums.shuffle(&mut self.rng);
+                nums.shuffle(&mut self.rng);
+
+                // this protects us from triggering the same finger twice in sequence
+                if nums[0] != *self.channelorder[h].last().unwrap() {
+                    break;
+                }
+            }
 
             self.channelorder[h] = nums;
         }
 
-        println!(" * New Pattern: {:?}-{:?}", self.channelorder[0], self.channelorder[1]);
+        //println!(" * New Pattern: {:?}-{:?}", self.channelorder[0], self.channelorder[1]);
 
     }
 
@@ -70,11 +77,11 @@ impl SeqGen {
     }
 
     fn curr_cycle(&mut self) -> i64{
-        ( self.sample * 1_000  / SAMPLERATE  / CYCLEPERIOD ) % CHANNELS
+        ( self.sample * 1_000 * CHANNELS / SAMPLERATE  / CYCLEPERIOD ) % CHANNELS
     }
 
     fn in_pauze(&self) -> bool {
-        let curr_paucycle = ( self.sample * 1_000 * CHANNELS / SAMPLERATE  / CYCLEPERIOD ) % PAUCYCLE;
+        let curr_paucycle = ( self.sample * 1_000 / SAMPLERATE  / CYCLEPERIOD ) % PAUCYCLE;
 
         PAUZES.contains(&curr_paucycle)
 
@@ -96,10 +103,6 @@ impl SeqGen {
 
         self.cycle = self.curr_cycle();
 
-        if self.in_pauze() {
-            return 0.0;
-        }
-
         let active_channel = self.channelorder[hand][self.cycle as usize];
 
         if channel != active_channel {
@@ -116,7 +119,6 @@ impl SeqGen {
 
         let arg = rel_sample * STIMFREQ * 2;
         (arg as f64 * PI / SAMPLERATE as f64).sin()
-
     } 
         
 }
@@ -125,7 +127,7 @@ fn main() {
     let mut seq1 = SeqGen::new();
 
     //set filename with all parameters included
-    let fname = "output/sine-2hands-pauzed-".to_string() + &CHANNELS.to_string() + &"chan-".to_string() 
+    let fname = "output/sine-2hands-pauzed".to_string() + &CHANNELS.to_string() + &"chan-".to_string() 
         + &STIMFREQ.to_string() + &"SFREQ-".to_string() + &STIMPERIOD.to_string() 
         + &"SPER-".to_string() + &CYCLEPERIOD.to_string() + &"CPER-WAV".to_string() + &SAMPLERATE.to_string() + &"Hz-16bit-signed.wav".to_string();    
 
@@ -147,11 +149,15 @@ fn main() {
     for _ in 0..samples_to_go {
         for hand in 0..2 {  
             for channel in 0..CHANNELS {
-                let sample = seq1.sample(hand, channel);
-                let amplitude = i16::MAX as f64;
+                if seq1.in_pauze() {
+                    writer.write_sample(0).unwrap();    
+                } else {
+                    let sample = seq1.sample(hand, channel);
+                    let amplitude = i16::MAX as f64;
                 
-                //println!("Sample #{} a chan {} has value: {} with duration {}", seq1.sample, channel, sample*amplitude, writer.duration());
-                writer.write_sample((sample*amplitude) as i16).unwrap();
+                    //println!("Sample #{} a chan {} has value: {} with duration {}", seq1.sample, channel, sample*amplitude, writer.duration());
+                    writer.write_sample((sample*amplitude) as i16).unwrap();
+                }
             }
         }
         seq1.next_sample(); 
