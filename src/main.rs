@@ -20,9 +20,12 @@ const STIMFREQ     : i64 = 250;    // Stimulation frequency in Hz
 const STIMPERIOD   : i64 = 100;    // Stimulation period of single channel in ms
 const CYCLEPERIOD  : i64 = 666;   // Stimulation period in ms
 
+const PAUCYCLE     : i64 = 5;
+const PAUZES       : [i64; 2] = [4, 5]; 
+
 //const PAUZES       : [i32; 8] = [ 3, 4, 8, 9, 13, 14, 18, 19 ];
 
-const SECONDSOUTPUT: i64 = 90;   // Duration of output wav
+const SECONDSOUTPUT: i64 = 98;   // Duration of output wav
 const RANDOMSEED   : u64 = 4;      // Seed to contract random pattern generation
 
 type  AtomSeq = [i64; CHANNELS as usize];
@@ -58,18 +61,24 @@ impl SeqGen {
             self.channelorder[h] = nums;
         }
 
+        println!(" * New Pattern: {:?}-{:?}", self.channelorder[0], self.channelorder[1]);
+
     }
-
-
 
     fn next_sample(&mut self) {
         self.sample += 1;
     }
 
     fn curr_cycle(&mut self) -> i64{
-        ( self.sample * 1_000 / SAMPLERATE  / CYCLEPERIOD ) % CHANNELS
+        ( self.sample * 1_000  / SAMPLERATE  / CYCLEPERIOD ) % CHANNELS
     }
 
+    fn in_pauze(&self) -> bool {
+        let curr_paucycle = ( self.sample * 1_000 * CHANNELS / SAMPLERATE  / CYCLEPERIOD ) % PAUCYCLE;
+
+        PAUZES.contains(&curr_paucycle)
+
+    }
 
     fn sample(&mut self, hand: usize, channel: i64) -> f64 {
         if self.curr_cycle() < self.cycle  {
@@ -87,6 +96,10 @@ impl SeqGen {
 
         self.cycle = self.curr_cycle();
 
+        if self.in_pauze() {
+            return 0.0;
+        }
+
         let active_channel = self.channelorder[hand][self.cycle as usize];
 
         if channel != active_channel {
@@ -101,8 +114,8 @@ impl SeqGen {
             return 0.0;
         }
 
-        (rel_sample as f64 * STIMFREQ as f64 * 2.0 * PI / SAMPLERATE as f64).sin()
-
+        let arg = rel_sample * STIMFREQ * 2;
+        (arg as f64 * PI / SAMPLERATE as f64).sin()
 
     } 
         
@@ -112,7 +125,7 @@ fn main() {
     let mut seq1 = SeqGen::new();
 
     //set filename with all parameters included
-    let fname = "output/sine-2hands-".to_string() + &CHANNELS.to_string() + &"chan-".to_string() 
+    let fname = "output/sine-2hands-pauzed-".to_string() + &CHANNELS.to_string() + &"chan-".to_string() 
         + &STIMFREQ.to_string() + &"SFREQ-".to_string() + &STIMPERIOD.to_string() 
         + &"SPER-".to_string() + &CYCLEPERIOD.to_string() + &"CPER-WAV".to_string() + &SAMPLERATE.to_string() + &"Hz-16bit-signed.wav".to_string();    
 
