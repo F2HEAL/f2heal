@@ -25,7 +25,7 @@ const PAUCYCLE     : i64 = 5;
 const PAUZES       : [i64; 2] = [3, 4]; 
 //const PAUZES       : [i64; 0] = [ ]; 
 
-const SECONDSOUTPUT: i64 = 90;   // Duration of output wav
+const SECONDSOUTPUT: i64 = 7200;   // Duration of output wav
 const RANDOMSEED   : u64 = 4;      // Seed to contract random pattern generation
 
 type  AtomSeq = [i64; CHANNELS as usize];
@@ -144,21 +144,22 @@ fn main() {
     seq1.gen_channelorder();
 
     for _ in 0..samples_to_go {
+        let mut next_sample : [i32; 2*CHANNELS as usize] = [0; 2*CHANNELS as usize];
+
         for hand in 0..2 {  
             for channel in 0..CHANNELS {
-                if seq1.in_pauze() {
-                    enc.process_interleaved(&[0], (channel + hand * CHANNELS) as u32).unwrap();
-
-                } else {
+                if !seq1.in_pauze() {
+                    
                     let sample = seq1.sample(hand as usize, channel);
                     let amplitude = i16::MAX as f64;
                 
                     //println!("Sample #{} a chan {} has value: {} with duration {}", seq1.sample, channel, sample*amplitude, writer.duration());
                         
-                    enc.process_interleaved(&[((sample*amplitude) as i32)], (channel + hand * CHANNELS) as u32).unwrap();
+                    next_sample[(channel + hand * CHANNELS) as usize] = (sample*amplitude) as i32;
                 }
             }
         }
+        enc.process_interleaved(&next_sample,1).unwrap();
         seq1.next_sample(); 
     }
 
