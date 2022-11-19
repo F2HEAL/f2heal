@@ -44,7 +44,7 @@ impl SeqGen {
 
         let seq = [ [0; 4], [0; 4] ];
         
-        SeqGen { rng: new_rng, sample : 0, cycle: i64::MAX, cyclestart: 0, channelorder : seq }
+        SeqGen { rng: new_rng, sample : 0, cycle: 0, cyclestart: 0, channelorder : seq }
     }
 
     // Generates new random pattern for each hand
@@ -74,20 +74,7 @@ impl SeqGen {
 
     fn next_sample(&mut self) {
         self.sample += 1;
-    }
 
-    fn curr_cycle(&mut self) -> i64{
-        ( self.sample * 1_000 * CHANNELS / SAMPLERATE  / CYCLEPERIOD ) % CHANNELS
-    }
-
-    fn in_pauze(&self) -> bool {
-        let curr_paucycle = ( self.sample * 1_000 / SAMPLERATE  / CYCLEPERIOD ) % PAUCYCLE;
-
-        PAUZES.contains(&curr_paucycle)
-
-    }
-
-    fn sample(&mut self, hand: usize, channel: i64) -> f64 {
         if self.curr_cycle() < self.cycle  {
             // we went back to cycle 0:
             //  - generate new random pattern for both hands
@@ -102,7 +89,20 @@ impl SeqGen {
         }
 
         self.cycle = self.curr_cycle();
+    }
 
+    fn curr_cycle(&mut self) -> i64{
+        ( self.sample * 1_000 * CHANNELS / SAMPLERATE  / CYCLEPERIOD ) % CHANNELS
+    }
+
+    fn in_pauze(&self) -> bool {
+        let curr_paucycle = ( self.sample * 1_000 / SAMPLERATE  / CYCLEPERIOD ) % PAUCYCLE;
+
+        PAUZES.contains(&curr_paucycle)
+
+    }
+
+    fn sample(&mut self, hand: usize, channel: i64) -> f64 {
         let active_channel = self.channelorder[hand][self.cycle as usize];
 
         if channel != active_channel {
@@ -124,10 +124,9 @@ impl SeqGen {
 }
 
 fn main() {
-    let mut seq1 = SeqGen::new();
 
     //set filename with all parameters included
-    let fname = "output/sine-2hands-pauzed".to_string() + &CHANNELS.to_string() + &"chan-".to_string() 
+    let fname = "output/sine-2hands-pauzed-".to_string() + &CHANNELS.to_string() + &"chan-".to_string() 
         + &STIMFREQ.to_string() + &"SFREQ-".to_string() + &STIMPERIOD.to_string() 
         + &"SPER-".to_string() + &CYCLEPERIOD.to_string() + &"CPER-WAV".to_string() + &SAMPLERATE.to_string() + &"Hz-16bit-signed.wav".to_string();    
 
@@ -142,9 +141,12 @@ fn main() {
     };
     let mut writer = hound::WavWriter::create(fname, wavspec).unwrap();
     
-    
 
     let samples_to_go : i64 = SECONDSOUTPUT * SAMPLERATE;
+
+
+    let mut seq1 = SeqGen::new();
+    seq1.gen_channelorder();
 
     for _ in 0..samples_to_go {
         for hand in 0..2 {  
