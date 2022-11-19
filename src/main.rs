@@ -3,7 +3,8 @@ use rand_chacha::ChaCha8Rng;
 use rand::prelude::*;
 use std::f64::consts::PI;
 use std::i16;
-use hound;
+use flac_bound::{WriteWrapper, FlacEncoder};
+use std::fs::File;
 
 
 // Golden values:
@@ -24,7 +25,7 @@ const PAUCYCLE     : i64 = 5;
 const PAUZES       : [i64; 2] = [3, 4]; 
 //const PAUZES       : [i64; 0] = [ ]; 
 
-const SECONDSOUTPUT: i64 = 7200;   // Duration of output wav
+const SECONDSOUTPUT: i64 = 90;   // Duration of output wav
 const RANDOMSEED   : u64 = 4;      // Seed to contract random pattern generation
 
 type  AtomSeq = [i64; CHANNELS as usize];
@@ -127,23 +128,17 @@ fn main() {
 
     //set filename with all parameters included
     let fname = "output/sine-2hands-pauzed-".to_string() + &CHANNELS.to_string() + &"chan-".to_string() 
-        + &STIMFREQ.to_string() + &"SFREQ-".to_string() + &STIMPERIOD.to_string() 
-        + &"SPER-".to_string() + &CYCLEPERIOD.to_string() + &"CPER-WAV".to_string() + &SAMPLERATE.to_string() + &"Hz-16bit-signed.wav".to_string();    
-
-    println!("\nWriting {}sec output to: {}", SECONDSOUTPUT, fname);
-
-    // setup wav stream
-    let wavspec = hound::WavSpec {
-        channels: 2*CHANNELS as u16,
-        sample_rate: SAMPLERATE as u32,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
-    };
-    let mut writer = hound::WavWriter::create(fname, wavspec).unwrap();
+    + &STIMFREQ.to_string() + &"SFREQ-".to_string() + &STIMPERIOD.to_string() 
+    + &"SPER-".to_string() + &CYCLEPERIOD.to_string() + &"CPER.flac".to_string();    
     
-
+    println!("\nWriting {}sec output to: {}", SECONDSOUTPUT, fname);
+    
     let samples_to_go : i64 = SECONDSOUTPUT * SAMPLERATE;
-
+    
+    let mut outf = File::create(fname).unwrap();
+    let mut outw = WriteWrapper(&mut outf);
+    let mut enc = FlacEncoder::new().unwrap().channels(8).bits_per_sample(16).total_samples_estimate(samples_to_go as u64).compression_level(8).init_write(&mut outw).unwrap();
+    eprintln!("{:?}", enc);
 
     let mut seq1 = SeqGen::new();
     seq1.gen_channelorder();
@@ -152,16 +147,20 @@ fn main() {
         for hand in 0..2 {  
             for channel in 0..CHANNELS {
                 if seq1.in_pauze() {
-                    writer.write_sample(0).unwrap();    
+                    enc.process_interleaved(&[0], (channel + hand * CHANNELS) as u32).unwrap();
+
                 } else {
-                    let sample = seq1.sample(hand, channel);
+                    let sample = seq1.sample(hand as usize, channel);
                     let amplitude = i16::MAX as f64;
                 
                     //println!("Sample #{} a chan {} has value: {} with duration {}", seq1.sample, channel, sample*amplitude, writer.duration());
-                    writer.write_sample((sample*amplitude) as i16).unwrap();
+                        
+                    enc.process_interleaved(&[((sample*amplitude) as i32)], (channel + hand * CHANNELS) as u32).unwrap();
                 }
             }
         }
         seq1.next_sample(); 
     }
+
+    
 }

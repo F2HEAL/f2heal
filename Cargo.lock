@@ -12,10 +12,25 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 name = "f2heal"
 version = "0.1.0"
 dependencies = [
- "hound",
+ "flac-bound",
  "rand",
  "rand_chacha",
 ]
+
+[[package]]
+name = "flac-bound"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d438dc79612e982e62d0d86a1fd434b4f536cddf156ce02063cd56fc3d8d426c"
+dependencies = [
+ "flac-sys",
+]
+
+[[package]]
+name = "flac-sys"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5ccca1896065c6c3927147467ab3d042565607c01194e36560e84344a02c5c0"
 
 [[package]]
 name = "getrandom"
@@ -27,12 +42,6 @@ dependencies = [
  "libc",
  "wasi",
 ]
-
-[[package]]
-name = "hound"
-version = "3.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d13cdbd5dbb29f9c88095bbdc2590c9cba0d0a1269b983fef6b2cdd7e9f4db1"
 
 [[package]]
 name = "libc"
