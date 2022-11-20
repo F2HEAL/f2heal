@@ -3,31 +3,156 @@ use rand_chacha::ChaCha8Rng;
 use rand::prelude::*;
 use std::f64::consts::PI;
 use std::i16;
-use hound;
+//use flac_bound::{WriteWrapper, FlacEncoder};
+use flac_bound;
+use std::fs::File;
+
+use clap::{Parser};
+use colored::Colorize;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+/// Create F2Heal audio output
+struct Arguments {
+
+    /// Channels or fingers per side (L/R), 
+    #[arg(short, long, default_value_t = 4)]
+    channels : i64,
+
+    /// Sample rate in Hz
+    #[arg(long, default_value_t = 44100)]
+    samplerate : i64,
+
+    /// Frequency of finger stimulation in Hz
+    #[arg(long, default_value_t = 250)]
+    stimfreq : i64,
+
+    /// Duration of the finger stimulation in ms
+    #[arg(long, default_value_t = 100)]
+    stimperiod : i64,
+
+    /// Duration of one cycle (stimulation of all fingers)
+    #[arg(long, default_value_t = 666)]
+    cycleperiod : i64,
+
+    /// Duration (in cycles) of one pauze-cycle
+    #[arg(long, default_value_t = 5)]
+    pauzecycleperiod : i64,
+
+    /// The cycles (within the pauze-cycle) with no stimulation output produced
+    #[arg(short, long)]
+    pauzes : Vec<i64>,
+
+    /// Duration in sec of output
+    #[arg(short,long)]
+    secondsoutput: i64,
+
+    /// Random seed (default from timer)
+    #[arg(short, long)]
+    randomseed: Option<i64>,
+
+    /// Output verbosity (multiple allowed)
+    #[clap(short, long, action = clap::ArgAction::Count)]
+    verbosity: u8,
+
+}
+
+impl Arguments {
+    fn verify_argvalues(&self) {
+        // Do the stimulation frequency en period match, otherwise said, does the stimulation sine
+        // end on period end
+
+        let stimfreq_frame = 1000 / self.stimperiod;
+        let smooth_stim_badend = (self.stimfreq % stimfreq_frame) != 0;
+
+        if smooth_stim_badend {
+            println!("\n{}",
+                format!("WARNING: Stimulation period and frequency do not match!").red().bold());
+        }
+
+        for pauze in self.pauzes.iter() {
+            if pauze >= &self.pauzecycleperiod {
+                println!("\n{}",    
+                    format!("WARNING: This pauze will have no effect: {}", pauze).red().bold(),
+                );
+            }
+        }
+
+        assert_eq!(self.channels,4,"!!!ERROR: Only 4 channels supported for now");
+
+    }
 
 
-// Golden values:
-// const SAMPLERATE   : u32 = 44100;
-// const CHANNELS     : u16 = 4;      // = #fingers
-// const RANDPATTERNS : u8  = 6;      // number of patterns before cycle
-// const STIMFREQ     : u32 = 250;    // Stimulation frequency in Hz
-// const STIMPERIOD   : u32 = 100;    // Stimulation period of single channel in ms
-// const CYCLEPERIOD  : u32 = 666;    // Stimulation period in ms
+    fn display_config(&self) {
+        println!("Generating FLAC output for:");
+        println!("   Channels [L/R]          : {}", self.channels);
+        println!("   Sample Rate             : {}Hz", self.samplerate);
+        println!("   Duration                : {}s", self.secondsoutput);
+        println!("");
+        println!("   Stimulation details:");
+        println!("     Stimulation Frequency : {}Hz", self.stimfreq);
+        println!("     Stimulation Period    : {}ms", self.stimperiod);
+        println!("     Cycle Period          : {}ms", self.cycleperiod);
+        println!("");
+        if self.pauzes.is_empty() {
+            println!("   Without pauzes");
+        } else {
+            println!("   Pauze cycle period      : {}", self.pauzecycleperiod);
+            println!("   Pauze on cycles         : {:?}", self.pauzes);
+        }
+        println!("");
+        if self.randomseed.is_none() {
+            println!("   Randomized seed");
+        } else {
+            println!("   Random seed             : {}", self.randomseed.unwrap());
+        }
+  
+    }
 
-const SAMPLERATE   : i64 = 44100;
-const CHANNELS     : i64 = 4;      // = #fingers
-const STIMFREQ     : i64 = 250;    // Stimulation frequency in Hz
-const STIMPERIOD   : i64 = 100;    // Stimulation period of single channel in ms
-const CYCLEPERIOD  : i64 = 666;   // Stimulation period in ms
+    fn construct_fname(&self) -> String {
+        let mut result: String = "output/sine-".to_owned();
 
-const PAUCYCLE     : i64 = 5;
-const PAUZES       : [i64; 2] = [3, 4]; 
-//const PAUZES       : [i64; 0] = [ ]; 
+        result.push_str(&self.stimfreq.to_string());    result.push_str("SFREQ-");
+        result.push_str(&self.stimperiod.to_string());  result.push_str("SPER-");
+        result.push_str(&self.cycleperiod.to_string()); result.push_str("CPER--");
 
-const SECONDSOUTPUT: i64 = 7200;   // Duration of output wav
-const RANDOMSEED   : u64 = 4;      // Seed to contract random pattern generation
+        if !self.pauzes.is_empty() {
+            let mut first : bool = true;
 
-type  AtomSeq = [i64; CHANNELS as usize];
+            for pauze in self.pauzes.iter() {
+                if first {
+                    first = false;
+                } else {
+                    result.push_str("_");
+                }
+
+                result.push_str(&pauze.to_string()); 
+            }
+            result.push_str("P");
+            result.push_str(&self.pauzecycleperiod.to_string());
+            result.push_str("--");
+        }
+
+        if !self.randomseed.is_none() {
+            result.push_str(&self.randomseed.unwrap().to_string());
+            result.push_str("RSEED--");
+        }
+
+        result.push_str(&self.channels.to_string());      result.push_str("LR-");
+        result.push_str(&self.samplerate.to_string());    result.push_str("Hz-");
+        result.push_str(&self.secondsoutput.to_string()); result.push_str("s");
+
+        result.push_str(".flac");
+
+        result
+    }
+
+}
+
+
+
+// TODO: this restricts channels to 4 (1)
+type  AtomSeq = [i64; 4 as usize];
 
 struct SeqGen {
     rng: ChaCha8Rng,
@@ -38,24 +163,28 @@ struct SeqGen {
 }
 
 impl SeqGen {
-    fn new() -> SeqGen {
-        //let mut rng = rand::thread_rng();
-        let new_rng = ChaCha8Rng::seed_from_u64(RANDOMSEED);
+    fn new(args: &Arguments) -> SeqGen {
 
+        let mut new_rng = ChaCha8Rng::from_entropy();
+        if !args.randomseed.is_none() {
+            new_rng = ChaCha8Rng::seed_from_u64(args.randomseed.unwrap() as u64);
+        } 
+
+
+        // TODO: this restricts channels to 4 (2)
         let seq = [ [0; 4], [0; 4] ];
         
-        SeqGen { rng: new_rng, sample : 0, cycle: i64::MAX, cyclestart: 0, channelorder : seq }
+        SeqGen { rng: new_rng, sample : 0, cycle: 0, cyclestart: 0, channelorder : seq }
     }
 
     // Generates new random pattern for each hand
-    fn gen_channelorder(&mut self) {
+    fn gen_channelorder(&mut self, args: &Arguments) {
         for h in 0..2 {
-            let mut nums : AtomSeq = [i64::MAX; CHANNELS as usize];
+            let mut nums : AtomSeq = [0; 4];
             
             loop {
-                for i in 0..CHANNELS{
-                    nums[i as usize] =  i;
-                }
+                let mut counter = 0;
+                nums = nums.map(|_| { counter += 1; counter -1 });
 
                 nums.shuffle(&mut self.rng);
 
@@ -68,48 +197,59 @@ impl SeqGen {
             self.channelorder[h] = nums;
         }
 
-        //println!(" * New Pattern: {:?}-{:?}", self.channelorder[0], self.channelorder[1]);
+        if args.verbosity > 1 {
+            println!(" * New Pattern: {:?}-{:?}", self.channelorder[0], self.channelorder[1]);
+        }
 
     }
 
-    fn next_sample(&mut self) {
+    fn next_sample(&mut self, args: &Arguments) {
         self.sample += 1;
-    }
 
-    fn curr_cycle(&mut self) -> i64{
-        ( self.sample * 1_000 * CHANNELS / SAMPLERATE  / CYCLEPERIOD ) % CHANNELS
-    }
-
-    fn in_pauze(&self) -> bool {
-        let curr_paucycle = ( self.sample * 1_000 / SAMPLERATE  / CYCLEPERIOD ) % PAUCYCLE;
-
-        PAUZES.contains(&curr_paucycle)
-
-    }
-
-    fn sample(&mut self, hand: usize, channel: i64) -> f64 {
-        if self.curr_cycle() < self.cycle  {
+        if self.curr_cycle(args) < self.cycle  {
             // we went back to cycle 0:
             //  - generate new random pattern for both hands
 
-            self.gen_channelorder();
+            self.gen_channelorder(&args);
         }
 
-        if self.curr_cycle() != self.cycle {
+        if self.curr_cycle(args) != self.cycle {
             // cycle changed:
             //  - set cyclestart
             self.cyclestart = self.sample;
+
+            if args.verbosity > 2 {
+                println!(" Cycle #{} at {}", self.curr_cycle(args), self.sample)
+            }
         }
 
-        self.cycle = self.curr_cycle();
+        self.cycle = self.curr_cycle(args);
+    }
 
+    fn curr_cycle(&mut self, args: &Arguments) -> i64{
+        //( self.sample * 1_000 * CHANNELS / SAMPLERATE  / CYCLEPERIOD ) % CHANNELS
+
+        ( self.sample * 1_000 * args.channels / args.samplerate / args.cycleperiod ) % args.channels
+    }
+
+    fn in_pauze(&self, args: &Arguments) -> bool {
+        //let curr_paucycle = ( self.sample * 1_000 / SAMPLERATE  / CYCLEPERIOD ) % PAUCYCLE;
+        //PAUZES.contains(&curr_paucycle);
+
+        let curr_paucycle = ( self.sample * 1_000 / args.samplerate / args.cycleperiod ) % args.pauzecycleperiod;
+
+        args.pauzes.contains(&curr_paucycle)
+    }
+
+    fn sample(&mut self, args: &Arguments, hand: usize, channel: i64) -> f64 {
         let active_channel = self.channelorder[hand][self.cycle as usize];
 
         if channel != active_channel {
             return 0.0;
         }
 
-        let cycle_active_time = STIMPERIOD * SAMPLERATE / 1000;
+        //let cycle_active_time = STIMPERIOD * SAMPLERATE / 1000;
+        let cycle_active_time = args.stimperiod * args.samplerate / 1000;
 
         let rel_sample = self.sample - self.cyclestart; 
 
@@ -117,49 +257,74 @@ impl SeqGen {
             return 0.0;
         }
 
-        let arg = rel_sample * STIMFREQ * 2;
-        (arg as f64 * PI / SAMPLERATE as f64).sin()
+        //let arg = rel_sample * STIMFREQ * 2;
+        let arg = rel_sample * args.stimfreq * 2;
+        //(arg as f64 * PI / SAMPLERATE as f64).sin()
+        (arg as f64 * PI / args.samplerate as f64).sin()
     } 
         
 }
 
+
 fn main() {
-    let mut seq1 = SeqGen::new();
+
+    let args = Arguments::parse();
+ 
+    if args.verbosity > 0 {
+        args.display_config();
+    }
+    args.verify_argvalues();
 
     //set filename with all parameters included
-    let fname = "output/sine-2hands-pauzed".to_string() + &CHANNELS.to_string() + &"chan-".to_string() 
-        + &STIMFREQ.to_string() + &"SFREQ-".to_string() + &STIMPERIOD.to_string() 
-        + &"SPER-".to_string() + &CYCLEPERIOD.to_string() + &"CPER-WAV".to_string() + &SAMPLERATE.to_string() + &"Hz-16bit-signed.wav".to_string();    
+    let fname = args.construct_fname();
 
-    println!("\nWriting {}sec output to: {}", SECONDSOUTPUT, fname);
+    println!("Writing output to: {}", fname);
 
-    // setup wav stream
-    let wavspec = hound::WavSpec {
-        channels: 2*CHANNELS as u16,
-        sample_rate: SAMPLERATE as u32,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
-    };
-    let mut writer = hound::WavWriter::create(fname, wavspec).unwrap();
-    
+    //let samples_to_go : i64 = SECONDSOUTPUT * SAMPLERATE;
+    let samples_to_go = args.secondsoutput * args.samplerate;
     
 
-    let samples_to_go : i64 = SECONDSOUTPUT * SAMPLERATE;
+  
+    let mut flac_outfile = File::create(fname).unwrap();
+    let mut flac_outwrap = flac_bound::WriteWrapper(&mut flac_outfile);
+    let mut flac_encoder = flac_bound::FlacEncoder::new().unwrap()
+        .channels((2*args.channels).try_into().unwrap())
+        .bits_per_sample(16)
+        .sample_rate(args.samplerate as u32)
+        .total_samples_estimate(samples_to_go as u64)
+        .compression_level(8)
+        .init_write(&mut flac_outwrap)
+        .unwrap();
+
+
+    
+    //let mut enc 
+    //eprintln!("{:?}", enc);
+
+    let mut seq1 = SeqGen::new(&args);
+    seq1.gen_channelorder(&args);
 
     for _ in 0..samples_to_go {
+        let mut next_sample : [i32; 2*4 as usize] = [0; 2*4 as usize];
+
         for hand in 0..2 {  
-            for channel in 0..CHANNELS {
-                if seq1.in_pauze() {
-                    writer.write_sample(0).unwrap();    
-                } else {
-                    let sample = seq1.sample(hand, channel);
+            for channel in 0..4 {
+                if !seq1.in_pauze(&args) {
+                    
+                    let sample = seq1.sample(&args, hand as usize, channel);
                     let amplitude = i16::MAX as f64;
                 
                     //println!("Sample #{} a chan {} has value: {} with duration {}", seq1.sample, channel, sample*amplitude, writer.duration());
-                    writer.write_sample((sample*amplitude) as i16).unwrap();
+                        
+                    next_sample[(channel + hand * 4) as usize] = (sample*amplitude) as i32;
                 }
             }
         }
-        seq1.next_sample(); 
+
+        flac_encoder.process_interleaved(&next_sample,1).unwrap();
+        
+        seq1.next_sample(&args); 
     }
+
+    
 }
