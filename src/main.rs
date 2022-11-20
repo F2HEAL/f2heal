@@ -106,8 +106,7 @@ impl Arguments {
         } else {
             println!("   Random seed             : {}", self.randomseed.unwrap());
         }
-
-        self.verify_argvalues();
+  
     }
 
     fn construct_fname(&self) -> String {
@@ -274,6 +273,7 @@ fn main() {
     if args.verbosity > 0 {
         args.display_config();
     }
+    args.verify_argvalues();
 
     //set filename with all parameters included
     let fname = args.construct_fname();
@@ -290,6 +290,7 @@ fn main() {
     let mut flac_encoder = flac_bound::FlacEncoder::new().unwrap()
         .channels((2*args.channels).try_into().unwrap())
         .bits_per_sample(16)
+        .sample_rate(args.samplerate as u32)
         .total_samples_estimate(samples_to_go as u64)
         .compression_level(8)
         .init_write(&mut flac_outwrap)
