@@ -1,14 +1,14 @@
 //use rand;
 use rand_chacha::ChaCha8Rng;
 use rand::prelude::*;
-use std::f64::consts::PI;
+use std::{f64::consts::PI, io::BufWriter};
 use std::i16;
 //use flac_bound::{WriteWrapper, FlacEncoder};
 use flac_bound;
 use std::fs::File;
-use hound;
+use hound::{self, WavWriter};
 
-use clap::Parser;
+use clap::{Parser, Arg};
 use colored::Colorize;
 
 
@@ -104,6 +104,9 @@ impl Arguments {
                 );
             }
         }
+
+        assert_eq!(self.channels,4,"!!!ERROR: Only 4 channels supported for now");
+
     }
 
 
@@ -181,7 +184,8 @@ impl Arguments {
 
 
 
-type  AtomSeq = [i64; CHANNELS as usize];
+// TODO: this restricts channels to 4 (1)
+type  AtomSeq = [i64; 4 as usize];
 
 struct SeqGen {
     rng: ChaCha8Rng,
@@ -192,22 +196,27 @@ struct SeqGen {
 }
 
 impl SeqGen {
-    fn new() -> SeqGen {
-        //let mut rng = rand::thread_rng();
-        let new_rng = ChaCha8Rng::seed_from_u64(RANDOMSEED);
+    fn new(args: &Arguments) -> SeqGen {
 
+        let mut new_rng = ChaCha8Rng::from_entropy();
+        if !args.randomseed.is_none() {
+            new_rng = ChaCha8Rng::seed_from_u64(args.randomseed.unwrap() as u64);
+        } 
+
+
+        // TODO: this restricts channels to 4 (2)
         let seq = [ [0; 4], [0; 4] ];
         
         SeqGen { rng: new_rng, sample : 0, cycle: 0, cyclestart: 0, channelorder : seq }
     }
 
     // Generates new random pattern for each hand
-    fn gen_channelorder(&mut self) {
+    fn gen_channelorder(&mut self, args: &Arguments) {
         for h in 0..2 {
             let mut nums : AtomSeq = [i64::MAX; CHANNELS as usize];
             
             loop {
-                for i in 0..CHANNELS{
+                for i in 0..args.channels{
                     nums[i as usize] =  i;
                 }
 
@@ -222,18 +231,20 @@ impl SeqGen {
             self.channelorder[h] = nums;
         }
 
-        //println!(" * New Pattern: {:?}-{:?}", self.channelorder[0], self.channelorder[1]);
+        if args.verbosity > 1 {
+            println!(" * New Pattern: {:?}-{:?}", self.channelorder[0], self.channelorder[1]);
+        }
 
     }
 
-    fn next_sample(&mut self) {
+    fn next_sample(&mut self, args: &Arguments) {
         self.sample += 1;
 
         if self.curr_cycle() < self.cycle  {
             // we went back to cycle 0:
             //  - generate new random pattern for both hands
 
-            self.gen_channelorder();
+            self.gen_channelorder(&args);
         }
 
         if self.curr_cycle() != self.cycle {
@@ -295,13 +306,17 @@ fn main() {
     
 
     //let mut wav_encoder  = hound::WavWriter::<std::io::BufWriter<File>>::new();
-    let mut wav_encoder  = hound::WavWriter::create("/dev/null", hound::WavSpec { channels: 0, sample_rate: 0, bits_per_sample: 0, sample_format: hound::SampleFormat::Int}).unwrap();
+    //let mut wav_encoder  = hound::WavWriter::create("/dev/null", hound::WavSpec { channels: 1, sample_rate: 16000, bits_per_sample: 16, sample_format: hound::SampleFormat::Int}).unwrap();
+    let mut wav_encoder: Option<WavWriter<BufWriter<File>>> = None;
+    //let mut flac_outfile = File::create("/dev/null").unwrap();
+    //let mut flac_outwrap = flac_bound::WriteWrapper(&mut flac_outfile);
+    //let mut flac_encoder = flac_bound::FlacEncoder::new().unwrap().init_write(&mut flac_outwrap).unwrap(); 
+    let mut flac_outfile;
+    let mut flac_outwrap;
+    let mut flac_encoder;
 
-    let mut flac_outfile : File;
-    let mut flac_outwrap : flac_bound::WriteWrapper;
-    let mut flac_encoder = flac_bound::FlacEncoder::new().unwrap().init_stdout().unwrap(); 
-    
-    if args.wavoutput {
+    let cwavoutput = args.wavoutput;
+    if cwavoutput {
         // setup wav stream
         let wavspec = hound::WavSpec {
             channels: 2*args.channels as u16,
@@ -309,7 +324,7 @@ fn main() {
             bits_per_sample: 16,
             sample_format: hound::SampleFormat::Int,
         };
-        wav_encoder = hound::WavWriter::create(fname, wavspec).unwrap();
+        wav_encoder = Some(hound::WavWriter::create(fname, wavspec).unwrap());
     } else {
         flac_outfile = File::create(fname).unwrap();
         flac_outwrap = flac_bound::WriteWrapper(&mut flac_outfile);
@@ -327,8 +342,8 @@ fn main() {
     //let mut enc 
     //eprintln!("{:?}", enc);
 
-    let mut seq1 = SeqGen::new();
-    seq1.gen_channelorder();
+    let mut seq1 = SeqGen::new(&args);
+    seq1.gen_channelorder(&args);
 
     for _ in 0..samples_to_go {
         let mut next_sample : [i32; 2*CHANNELS as usize] = [0; 2*CHANNELS as usize];
@@ -347,15 +362,15 @@ fn main() {
             }
         }
 
-        if args.wavoutput { 
+        if cwavoutput { 
             for chan_sample in next_sample.iter() {
-                wav_encoder.write_sample(*chan_sample as i16).unwrap();
+                wav_encoder.unwrap().write_sample(*chan_sample as i16).unwrap();
             }
 
         } else {
             flac_encoder.process_interleaved(&next_sample,1).unwrap();
         }
-        seq1.next_sample(); 
+        seq1.next_sample(&args); 
     }
 
     
