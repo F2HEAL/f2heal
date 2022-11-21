@@ -1,9 +1,6 @@
-//use rand;
 use rand_chacha::ChaCha8Rng;
 use rand::prelude::*;
 use std::f64::consts::PI;
-use std::i16;
-//use flac_bound::{WriteWrapper, FlacEncoder};
 use flac_bound;
 use std::fs::File;
 
@@ -12,14 +9,15 @@ use colored::Colorize;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
-/// Create F2Heal audio output
+
+/// Create F2Heal FLAC audio output
 struct Arguments {
 
     /// Channels or fingers per side (L/R), 
     #[arg(short, long, default_value_t = 4)]
     channels : i64,
 
-    /// Sample rate in Hz
+    /// Output file sample rate in Hz
     #[arg(long, default_value_t = 44100)]
     samplerate : i64,
 
@@ -35,7 +33,8 @@ struct Arguments {
     #[arg(long, default_value_t = 666)]
     cycleperiod : i64,
 
-    /// Use simultaneous stimulation with following phase shift interval in ms
+    /// Select 'Simultaneous Stimulation'-mode (as opposed to default Blocked-mode) and set the phase shift interval in ms. 
+    /// Each cycle, all channels, but one, will recieve a random delay within this interval.
     #[arg(long)]
     phaseshift : Option<i64>,
 
@@ -43,7 +42,7 @@ struct Arguments {
     #[arg(long, default_value_t = 5)]
     pauzecycleperiod : i64,
 
-    /// The cycles (within the pauze-cycle) with no stimulation output produced
+    /// The cycles (within the pauze-cycle) with no stimulation output produced. You can use this option more than once.
     #[arg(short, long)]
     pauzes : Vec<i64>,
 
@@ -55,17 +54,19 @@ struct Arguments {
     #[arg(short, long)]
     randomseed: Option<i64>,
 
-    /// Output verbosity (multiple allowed)
+    /// Output verbosity. You can use this option more than once.
     #[clap(short, long, action = clap::ArgAction::Count)]
     verbosity: u8,
 
 }
 
 impl Arguments {
+
+    /// Verify the supplied arguments make sense for generating output
     fn verify_argvalues(&self) {
+
         // Do the stimulation frequency en period match, otherwise said, does the stimulation sine
         // end on period end
-
         let stimfreq_frame = 1000 / self.stimperiod;
         let smooth_stim_badend = (self.stimfreq % stimfreq_frame) != 0;
 
@@ -74,6 +75,7 @@ impl Arguments {
                 format!("WARNING: Stimulation period and frequency do not match!").red().bold());
         }
 
+        // Are the selected pauzes within the pauze period
         for pauze in self.pauzes.iter() {
             if pauze >= &self.pauzecycleperiod {
                 println!("\n{}",    
@@ -82,6 +84,7 @@ impl Arguments {
             }
         }
 
+        // Is the phaseshift small enough to allow stim signal to end before the next one starts
         if !self.phaseshift.is_none() {
             if (self.phaseshift.unwrap() + self.stimperiod) * self.channels > self.cycleperiod {
                 println!("\n{}",    
@@ -92,11 +95,13 @@ impl Arguments {
             }
         }
 
+        // The 4 channels are hardcoded in several places, so force them on 4 for now...
         assert_eq!(self.channels,4,"!!!ERROR: Only 4 channels supported for now");
 
     }
 
 
+    /// Display overview of configured parameters for this run1
     fn display_config(&self) {
         println!("Generating FLAC output for:");
         println!("   Channels [L/R]          : {}", self.channels);
@@ -123,6 +128,7 @@ impl Arguments {
   
     }
 
+    /// Set filename with all parameters included
     fn construct_fname(&self) -> String {
         let mut result: String = "output/Sine-".to_owned();
 
@@ -184,6 +190,8 @@ struct SeqGen {
 }
 
 impl SeqGen {
+
+    /// Construct new SegGen from supplied arguments.
     fn new(args: &Arguments) -> SeqGen {
 
         let mut new_rng = ChaCha8Rng::from_entropy();
@@ -198,6 +206,7 @@ impl SeqGen {
         SeqGen { rng: new_rng, sample : 0, cycle: 0, cyclestart: 0, channelorder : seq }
     }
 
+    /// Init SegGen1 state from supplied arguments
     fn init(&mut self, args: &Arguments) {
         if args.phaseshift.is_none() {
             self.gen_channelorder(args);
@@ -206,7 +215,7 @@ impl SeqGen {
         }
     }
 
-    /// Generates new random pattern for each hand (unless phaseshift)
+    /// Generates new random pattern for each hand (when blocked mode - not phaseshift)
     fn gen_channelorder(&mut self, args: &Arguments) {
         for h in 0..2 {
             let mut nums : AtomSeq = [0; 4];
@@ -233,12 +242,12 @@ impl SeqGen {
     }
 
 
-    /// Generate new randomized phase delay for each channel (for phaseshift)
+    /// Generate new randomized phase delay for each channel (when phaseshift - not blocked mode)
     fn gen_phasedelay(&mut self, args: &Arguments) {
         for h in 0..2 {
             let mut nums : AtomSeq = [0; 4];
 
-            // we don't touch the last element
+            // we don't touch the last element, it will be the zero-delay one
             for i in 0..3 {
                 nums[i] = self.rng.gen_range(0..args.phaseshift.unwrap())
             }
@@ -254,7 +263,7 @@ impl SeqGen {
 
     }
 
-
+    // Set internal counter to next sample. Renew internal structures where necessary
     fn next_sample(&mut self, args: &Arguments) {
         self.sample += 1;
 
@@ -285,16 +294,19 @@ impl SeqGen {
         self.cycle = self.curr_cycle(args);
     }
 
+    /// Returns the current cycle (in range 0..args.channels)
     fn curr_cycle(&mut self, args: &Arguments) -> i64{
         ( self.sample * 1_000 * args.channels / args.samplerate / args.cycleperiod ) % args.channels
     }
 
+    /// Returns whether channel is in pauze
     fn in_pauze(&self, args: &Arguments) -> bool {
         let curr_paucycle = ( self.sample * 1_000 / args.samplerate / args.cycleperiod ) % args.pauzecycleperiod;
 
         args.pauzes.contains(&curr_paucycle)
     }
 
+    // Returns value of current sample for hand/channel combination
     fn sample(&mut self, args: &Arguments, hand: usize, channel: i64) -> f64 {
         if args.phaseshift.is_none() {
             self.sample_blocked(args, hand, channel)
@@ -303,6 +315,7 @@ impl SeqGen {
         }
     }
 
+    /// Value of sample in phaseshifted mode
     fn sample_phaseshifted(&mut self, args: &Arguments, hand: usize, channel: i64) -> f64 {
         let cycle_active_from = self.cyclestart + self.channelorder[hand][channel as usize];
         let cycle_active_until = cycle_active_from + args.stimperiod * args.samplerate / 1_000;
@@ -317,6 +330,7 @@ impl SeqGen {
         }
     }
 
+    /// Value of sample in blocked mode
     fn sample_blocked(&mut self, args: &Arguments, hand: usize, channel: i64) -> f64 {
         let active_channel = self.channelorder[hand][self.cycle as usize];
 
@@ -348,15 +362,11 @@ fn main() {
     }
     args.verify_argvalues();
 
-    //set filename with all parameters included
     let fname = args.construct_fname();
 
     println!("Writing output to: {}", fname);
 
-    //let samples_to_go : i64 = SECONDSOUTPUT * SAMPLERATE;
     let samples_to_go = args.secondsoutput * args.samplerate;
-    
-
   
     let mut flac_outfile = File::create(fname).unwrap();
     let mut flac_outwrap = flac_bound::WriteWrapper(&mut flac_outfile);
@@ -375,14 +385,11 @@ fn main() {
     for _ in 0..samples_to_go {
         let mut next_sample : [i32; 2*4 as usize] = [0; 2*4 as usize];
 
-        for hand in 0..2 {  
-            for channel in 0..4 {
-                if !seq1.in_pauze(&args) {
-                    
+        if !seq1.in_pauze(&args) {
+            for hand in 0..2 {  
+                for channel in 0..4 {    
                     let sample = seq1.sample(&args, hand as usize, channel);
                     let amplitude = i16::MAX as f64;
-                
-                    //println!("Sample #{} a chan {} has value: {} with duration {}", seq1.sample, channel, sample*amplitude, writer.duration());
                         
                     next_sample[(channel + hand * 4) as usize] = (sample*amplitude) as i32;
                 }

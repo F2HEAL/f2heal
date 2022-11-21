@@ -9,6 +9,5 @@ edition = "2021"
 clap = { version = "4.0.26", features = ["derive"] }
 colored = "2.0.0"
 flac-bound = "0.3.0"
-hound = "3.5.0"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
