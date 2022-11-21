@@ -35,6 +35,10 @@ struct Arguments {
     #[arg(long, default_value_t = 666)]
     cycleperiod : i64,
 
+    /// Use simultaneous stimulation with following phase shift interval in ms
+    #[arg(long)]
+    phaseshift : Option<i64>,
+
     /// Duration (in cycles) of one pauze-cycle
     #[arg(long, default_value_t = 5)]
     pauzecycleperiod : i64,
@@ -78,6 +82,16 @@ impl Arguments {
             }
         }
 
+        if !self.phaseshift.is_none() {
+            if (self.phaseshift.unwrap() + self.stimperiod) * self.channels > self.cycleperiod {
+                println!("\n{}",    
+                    format!("WARNING: Phase shift is too large: {}ms over limit", 
+                    self.phaseshift.unwrap() + self.stimperiod -  self.cycleperiod / self.channels,   
+                        ).red().bold(),
+                );
+            }
+        }
+
         assert_eq!(self.channels,4,"!!!ERROR: Only 4 channels supported for now");
 
     }
@@ -110,7 +124,14 @@ impl Arguments {
     }
 
     fn construct_fname(&self) -> String {
-        let mut result: String = "output/sine-".to_owned();
+        let mut result: String = "output/Sine-".to_owned();
+
+        if self.phaseshift.is_none() {
+            result.push_str("Blocked-");
+        } else {
+            result.push_str(&self.phaseshift.unwrap().to_string());
+            result.push_str("PhaseShifted-");
+        }
 
         result.push_str(&self.stimfreq.to_string());    result.push_str("SFREQ-");
         result.push_str(&self.stimperiod.to_string());  result.push_str("SPER-");
@@ -177,7 +198,7 @@ impl SeqGen {
         SeqGen { rng: new_rng, sample : 0, cycle: 0, cyclestart: 0, channelorder : seq }
     }
 
-    // Generates new random pattern for each hand
+    /// Generates new random pattern for each hand (unless phaseshift)
     fn gen_channelorder(&mut self, args: &Arguments) {
         for h in 0..2 {
             let mut nums : AtomSeq = [0; 4];
@@ -198,25 +219,55 @@ impl SeqGen {
         }
 
         if args.verbosity > 1 {
-            println!(" * New Pattern: {:?}-{:?}", self.channelorder[0], self.channelorder[1]);
+            println!(" * New Channel Order: {:?}-{:?}", self.channelorder[0], self.channelorder[1]);
         }
 
     }
+
+
+    /// Generate new randomized phase delay for each channel (for phaseshift)
+    fn gen_phasedelay(&mut self, args: &Arguments) {
+        for h in 0..2 {
+            let mut nums : AtomSeq = [0; 4];
+
+            // we don't touch the last element
+            for i in 0..3 {
+                nums[i] = self.rng.gen_range(0..args.phaseshift.unwrap())
+            }
+
+            nums.shuffle(&mut self.rng);
+
+            self.channelorder[h] = nums;
+        }
+
+        if args.verbosity > 1 {
+            println!(" * New Phase Shift: {:?}-{:?}", self.channelorder[0], self.channelorder[1]);
+        }
+
+    }
+
 
     fn next_sample(&mut self, args: &Arguments) {
         self.sample += 1;
 
         if self.curr_cycle(args) < self.cycle  {
             // we went back to cycle 0:
-            //  - generate new random pattern for both hands
+            //  - generate new random pattern for both hands (unless phaseshift)
 
-            self.gen_channelorder(&args);
+            if args.phaseshift.is_none() {
+                self.gen_channelorder(&args);
+            }  
         }
 
         if self.curr_cycle(args) != self.cycle {
             // cycle changed:
             //  - set cyclestart
+            //  - generate delay per channel (for phaseshift)
             self.cyclestart = self.sample;
+
+            if !args.phaseshift.is_none() {
+                self.gen_phasedelay(&args);
+            }
 
             if args.verbosity > 2 {
                 println!(" Cycle #{} at {}", self.curr_cycle(args), self.sample)
@@ -227,28 +278,44 @@ impl SeqGen {
     }
 
     fn curr_cycle(&mut self, args: &Arguments) -> i64{
-        //( self.sample * 1_000 * CHANNELS / SAMPLERATE  / CYCLEPERIOD ) % CHANNELS
-
         ( self.sample * 1_000 * args.channels / args.samplerate / args.cycleperiod ) % args.channels
     }
 
     fn in_pauze(&self, args: &Arguments) -> bool {
-        //let curr_paucycle = ( self.sample * 1_000 / SAMPLERATE  / CYCLEPERIOD ) % PAUCYCLE;
-        //PAUZES.contains(&curr_paucycle);
-
         let curr_paucycle = ( self.sample * 1_000 / args.samplerate / args.cycleperiod ) % args.pauzecycleperiod;
 
         args.pauzes.contains(&curr_paucycle)
     }
 
     fn sample(&mut self, args: &Arguments, hand: usize, channel: i64) -> f64 {
+        if args.phaseshift.is_none() {
+            self.sample_blocked(args, hand, channel)
+        } else {
+            self.sample_phaseshifted(args, hand, channel)
+        }
+    }
+
+    fn sample_phaseshifted(&mut self, args: &Arguments, hand: usize, channel: i64) -> f64 {
+        let cycle_active_from = self.cyclestart + self.channelorder[hand][channel as usize];
+        let cycle_active_until = cycle_active_from + args.stimperiod * args.samplerate / 1_000;
+
+        if self.sample > cycle_active_from && self.sample < cycle_active_until {
+            let rel_sample = self.sample - cycle_active_from;
+            
+            let arg = rel_sample * args.stimfreq * 2;
+            (arg as f64 * PI / args.samplerate as f64).sin()
+        } else {
+            0.0
+        }
+    }
+
+    fn sample_blocked(&mut self, args: &Arguments, hand: usize, channel: i64) -> f64 {
         let active_channel = self.channelorder[hand][self.cycle as usize];
 
         if channel != active_channel {
             return 0.0;
         }
 
-        //let cycle_active_time = STIMPERIOD * SAMPLERATE / 1000;
         let cycle_active_time = args.stimperiod * args.samplerate / 1000;
 
         let rel_sample = self.sample - self.cyclestart; 
@@ -257,9 +324,7 @@ impl SeqGen {
             return 0.0;
         }
 
-        //let arg = rel_sample * STIMFREQ * 2;
         let arg = rel_sample * args.stimfreq * 2;
-        //(arg as f64 * PI / SAMPLERATE as f64).sin()
         (arg as f64 * PI / args.samplerate as f64).sin()
     } 
         
