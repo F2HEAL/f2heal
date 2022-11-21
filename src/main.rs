@@ -198,6 +198,14 @@ impl SeqGen {
         SeqGen { rng: new_rng, sample : 0, cycle: 0, cyclestart: 0, channelorder : seq }
     }
 
+    fn init(&mut self, args: &Arguments) {
+        if args.phaseshift.is_none() {
+            self.gen_channelorder(args);
+        } else {
+            self.gen_phasedelay(args);
+        }
+    }
+
     /// Generates new random pattern for each hand (unless phaseshift)
     fn gen_channelorder(&mut self, args: &Arguments) {
         for h in 0..2 {
@@ -361,13 +369,8 @@ fn main() {
         .init_write(&mut flac_outwrap)
         .unwrap();
 
-
-    
-    //let mut enc 
-    //eprintln!("{:?}", enc);
-
     let mut seq1 = SeqGen::new(&args);
-    seq1.gen_channelorder(&args);
+    seq1.init(&args);
 
     for _ in 0..samples_to_go {
         let mut next_sample : [i32; 2*4 as usize] = [0; 2*4 as usize];
