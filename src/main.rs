@@ -132,7 +132,7 @@ impl Arguments {
         println!("     Cycle Period          : {}ms", self.cycleperiod);
         println!("");
         if !self.phaseshift.is_none() {
-            println!("     Phaseshifted, random interval : {}ms", self.cycleperiod);
+            println!("     Phaseshifted, random interval : {}ms", self.phaseshift.unwrap());
         } else if self.fixedphaseshift {
             println!("     Phaseshifted, fixed interval");
         } else {
