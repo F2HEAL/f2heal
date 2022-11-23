@@ -33,10 +33,16 @@ struct Arguments {
     #[arg(long, default_value_t = 666)]
     cycleperiod : i64,
 
-    /// Select 'Simultaneous Stimulation'-mode (as opposed to default Blocked-mode) and set the phase shift interval in ms. 
+    /// Select 'Simultaneous Stimulation'-mode (as opposed to default Blocked-mode) and set the random phase shift interval in ms. 
     /// Each cycle, all channels, but one, will recieve a random delay within this interval.
     #[arg(long)]
     phaseshift : Option<i64>,
+
+
+    /// Select 'Simultaneous Stimulation'-mode (as opposed to default Blocked-mode) with fixed shift intervals (quarter of stim period randomized per channel)
+    #[arg(short, long, default_value_t = false)]
+    fixedphaseshift: bool,
+
 
     /// Duration (in cycles) of one pauze-cycle
     #[arg(long, default_value_t = 5)]
@@ -75,6 +81,11 @@ impl Arguments {
                 format!("WARNING: Stimulation period and frequency do not match!").red().bold());
         }
 
+        if self.stimperiod * self.channels > self.cycleperiod {
+            println!("\n{}",
+                format!("WARNING: overlapping stimulation periods not supported!").red().bold());
+        }
+
         // Are the selected pauzes within the pauze period
         for pauze in self.pauzes.iter() {
             if pauze >= &self.pauzecycleperiod {
@@ -95,6 +106,13 @@ impl Arguments {
             }
         }
 
+        if !self.phaseshift.is_none() && self.fixedphaseshift {
+            println!("\n{}",
+                format!("ERROR: Conflicting command line options, choose either random of fixed phase shift mode.").red().bold());
+            assert_eq!(self.phaseshift.is_none(), self.fixedphaseshift, "!!!ERROR: Conflict in command line");
+            
+        }
+
         // The 4 channels are hardcoded in several places, so force them on 4 for now...
         assert_eq!(self.channels,4,"!!!ERROR: Only 4 channels supported for now");
 
@@ -112,6 +130,14 @@ impl Arguments {
         println!("     Stimulation Frequency : {}Hz", self.stimfreq);
         println!("     Stimulation Period    : {}ms", self.stimperiod);
         println!("     Cycle Period          : {}ms", self.cycleperiod);
+        println!("");
+        if !self.phaseshift.is_none() {
+            println!("     Phaseshifted, random interval : {}ms", self.cycleperiod);
+        } else if self.fixedphaseshift {
+            println!("     Phaseshifted, fixed interval");
+        } else {
+            println!("     Interleaved");
+        }
         println!("");
         if self.pauzes.is_empty() {
             println!("   Without pauzes");
@@ -132,11 +158,13 @@ impl Arguments {
     fn construct_fname(&self) -> String {
         let mut result: String = "output/Sine-".to_owned();
 
-        if self.phaseshift.is_none() {
-            result.push_str("Blocked-");
-        } else {
+        if !self.phaseshift.is_none() {
             result.push_str(&self.phaseshift.unwrap().to_string());
-            result.push_str("PhaseShifted-");
+            result.push_str("PhaseShifted--");
+        } else if self.fixedphaseshift {
+            result.push_str("FixPhaseShifted--"); 
+        } else {
+            result.push_str("Interleaved--");
         }
 
         result.push_str(&self.stimfreq.to_string());    result.push_str("SFREQ-");
@@ -208,14 +236,14 @@ impl SeqGen {
 
     /// Init SegGen1 state from supplied arguments
     fn init(&mut self, args: &Arguments) {
-        if args.phaseshift.is_none() {
+        if args.phaseshift.is_none() && !args.fixedphaseshift{
             self.gen_channelorder(args);
         } else {
             self.gen_phasedelay(args);
         }
     }
 
-    /// Generates new random pattern for each hand (when blocked mode - not phaseshift)
+    /// Generates new random pattern for each hand (for interleaved mode - not phaseshifted)
     fn gen_channelorder(&mut self, args: &Arguments) {
         for h in 0..2 {
             let mut nums : AtomSeq = [0; 4];
@@ -242,14 +270,18 @@ impl SeqGen {
     }
 
 
-    /// Generate new randomized phase delay for each channel (when phaseshift - not blocked mode)
+    /// Generate new randomized phase delay for each channel (when phaseshift - not interleaved mode)
     fn gen_phasedelay(&mut self, args: &Arguments) {
         for h in 0..2 {
             let mut nums : AtomSeq = [0; 4];
 
-            // we don't touch the last element, it will be the zero-delay one
-            for i in 0..3 {
-                nums[i] = self.rng.gen_range(0..args.phaseshift.unwrap())
+            // we don't touch the first element, it will be the zero-delay one ico randomized delays
+            for i in 1..4 {
+                if args.fixedphaseshift {
+                    nums[i] = i as i64 * 1_000 /  args.stimfreq / 4 * args.samplerate / 1_000;
+                } else {
+                    nums[i] = self.rng.gen_range(0..args.phaseshift.unwrap()) * args.samplerate / 1_000;
+                }
             }
 
             nums.shuffle(&mut self.rng);
@@ -271,7 +303,7 @@ impl SeqGen {
             // we went back to cycle 0:
             //  - generate new random pattern for both hands (unless phaseshift)
 
-            if args.phaseshift.is_none() {
+            if args.phaseshift.is_none() && !args.fixedphaseshift {
                 self.gen_channelorder(&args);
             }  
         }
@@ -282,7 +314,7 @@ impl SeqGen {
             //  - generate delay per channel (for phaseshift)
             self.cyclestart = self.sample;
 
-            if !args.phaseshift.is_none() {
+            if !args.phaseshift.is_none() || args.fixedphaseshift {
                 self.gen_phasedelay(&args);
             }
 
@@ -308,7 +340,7 @@ impl SeqGen {
 
     // Returns value of current sample for hand/channel combination
     fn sample(&mut self, args: &Arguments, hand: usize, channel: i64) -> f64 {
-        if args.phaseshift.is_none() {
+        if args.phaseshift.is_none() && !args.fixedphaseshift {
             self.sample_blocked(args, hand, channel)
         } else {
             self.sample_phaseshifted(args, hand, channel)
