@@ -14,7 +14,7 @@ use colored::Colorize;
 struct Arguments {
 
     /// Channels or fingers per side (L/R), 
-    #[arg(short, long, default_value_t = 4)]
+    #[arg(long, default_value_t = 4)]
     channels : i64,
 
     /// Output file sample rate in Hz
@@ -38,11 +38,14 @@ struct Arguments {
     #[arg(long)]
     phaseshift : Option<i64>,
 
-
     /// Select 'Simultaneous Stimulation'-mode (as opposed to default Blocked-mode) with fixed shift intervals (quarter of stim period randomized per channel)
     #[arg(short, long, default_value_t = false)]
     fixedphaseshift: bool,
 
+
+    /// Number of repetitions before new random channel-pattern is calculated
+    #[arg(short, long, default_value_t = 25)]
+    repetitions: i64,
 
     /// Duration (in cycles) of one pauze-cycle
     #[arg(long, default_value_t = 5)]
@@ -57,7 +60,7 @@ struct Arguments {
     secondsoutput: i64,
 
     /// Random seed (default from timer)
-    #[arg(short, long)]
+    #[arg(long)]
     randomseed: Option<i64>,
 
     /// Output verbosity. You can use this option more than once.
@@ -130,6 +133,7 @@ impl Arguments {
         println!("     Stimulation Frequency : {}Hz", self.stimfreq);
         println!("     Stimulation Period    : {}ms", self.stimperiod);
         println!("     Cycle Period          : {}ms", self.cycleperiod);
+        println!("     Cycle repetitions     : {}", self.repetitions);
         println!("");
         if !self.phaseshift.is_none() {
             println!("     Phaseshifted, random interval : {}ms", self.phaseshift.unwrap());
@@ -169,7 +173,8 @@ impl Arguments {
 
         result.push_str(&self.stimfreq.to_string());    result.push_str("SFREQ-");
         result.push_str(&self.stimperiod.to_string());  result.push_str("SPER-");
-        result.push_str(&self.cycleperiod.to_string()); result.push_str("CPER--");
+        result.push_str(&self.cycleperiod.to_string()); result.push_str("CPER-");
+        result.push_str(&self.repetitions.to_string()); result.push_str("R--");
 
         if !self.pauzes.is_empty() {
             let mut first : bool = true;
@@ -214,6 +219,7 @@ struct SeqGen {
     sample : i64,
     cycle: i64,
     cyclestart: i64,
+    repcycle: i64,
     channelorder : [ AtomSeq; 2],
 }
 
@@ -231,7 +237,7 @@ impl SeqGen {
         // TODO: this restricts channels to 4 (2)
         let seq = [ [0; 4], [0; 4] ];
         
-        SeqGen { rng: new_rng, sample : 0, cycle: 0, cyclestart: 0, channelorder : seq }
+        SeqGen { rng: new_rng, sample : 0, cycle: 0, cyclestart: 0, repcycle: 1, channelorder : seq }
     }
 
     /// Init SegGen1 state from supplied arguments
@@ -304,7 +310,12 @@ impl SeqGen {
             //  - generate new random pattern for both hands (unless phaseshift)
 
             if args.phaseshift.is_none() && !args.fixedphaseshift {
-                self.gen_channelorder(&args);
+                if self.repcycle < args.repetitions {
+                    self.repcycle += 1;
+                } else {
+                    self.repcycle = 1;
+                    self.gen_channelorder(&args);
+                }
             }  
         }
 
@@ -315,7 +326,12 @@ impl SeqGen {
             self.cyclestart = self.sample;
 
             if !args.phaseshift.is_none() || args.fixedphaseshift {
-                self.gen_phasedelay(&args);
+                if self.repcycle < args.repetitions {
+                    self.repcycle += 1;
+                } else {
+                    self.repcycle = 1;
+                    self.gen_phasedelay(&args);
+                }
             }
 
             if args.verbosity > 2 {
