@@ -63,6 +63,10 @@ struct Arguments {
     #[arg(long)]
     randomseed: Option<i64>,
 
+    #[arg(long, default_value_t = false)]
+    norandom: bool,
+
+
     /// Output verbosity. You can use this option more than once.
     #[clap(short, long, action = clap::ArgAction::Count)]
     verbosity: u8,
@@ -258,7 +262,9 @@ impl SeqGen {
                 let mut counter = 0;
                 nums = nums.map(|_| { counter += 1; counter -1 });
 
-                nums.shuffle(&mut self.rng);
+                if not args.norandom {
+                    nums.shuffle(&mut self.rng);
+                }
 
                 // this protects us from triggering the same finger twice in sequence
                 if nums[0] != *self.channelorder[h].last().unwrap() {
