@@ -262,7 +262,7 @@ impl SeqGen {
                 let mut counter = 0;
                 nums = nums.map(|_| { counter += 1; counter -1 });
 
-                if not args.norandom {
+                if ! args.norandom {
                     nums.shuffle(&mut self.rng);
                 }
 
