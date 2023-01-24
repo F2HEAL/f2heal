@@ -264,11 +264,12 @@ impl SeqGen {
 
                 if ! args.norandom {
                     nums.shuffle(&mut self.rng);
-                }
+                
 
-                // this protects us from triggering the same finger twice in sequence
-                if nums[0] != *self.channelorder[h].last().unwrap() {
-                    break;
+                    // this protects us from triggering the same finger twice in sequence
+                    if nums[0] != *self.channelorder[h].last().unwrap() {
+                        break;
+                    }
                 }
             }
 
