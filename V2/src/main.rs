@@ -1,5 +1,6 @@
 use rand_chacha::ChaCha8Rng;
 use rand::prelude::*;
+use std::f64::consts::PI;
 
 use flac_bound;
 use std::fs::File;
@@ -12,9 +13,8 @@ use colored::Colorize;
 
 /// Create F2Heal FLAC audio output
 struct Arguments {
-
     /// Channels or fingers per side (L/R), 
-    #[arg(long, default_value_t = 8)]
+    #[arg(short, long, default_value_t = 8)]
     channels : u32,
 
     /// Output file sample rate in Hz
@@ -33,30 +33,29 @@ struct Arguments {
     #[arg(long, default_value_t = 888)]
     cycleperiod : i64,
 
-   /// Duration (in cycles) of one pauze-cycle
-   #[arg(long, default_value_t = 5)]
-   pauzecycleperiod : i64,
+    /// Duration (in cycles) of one pauze-cycle
+    #[arg(long, default_value_t = 5)]
+    pauzecycleperiod : i64,
 
-   /// The cycles (within the pauze-cycle) with no stimulation output produced. You can use this option more than once.
-   #[arg(short, long)]
-   pauzes : Vec<i64>,
+    /// The cycles (within the pauze-cycle) with no stimulation output produced. You can use this option more than once.
+    #[arg(short, long)]
+    pauzes : Vec<i64>,
 
-   /// Duration in sec of output
-   #[arg(short,long)]
-   secondsoutput: i64,
+    /// Duration in sec of output
+    #[arg(short,long)]
+    secondsoutput: i64,
 
-   /// Random seed (default from timer)
-   #[arg(long)]
-   randomseed: Option<i64>,
+    /// Random seed (default from timer)
+    #[arg(long)]
+    randomseed: Option<i64>,
 
-   /// Disable randomization of channels in blocked mode, and thus plays channels in order 1->2->3->4
-   #[arg(long, default_value_t = false)]
-   norandom: bool,
+    /// Disable randomization of channels in blocked mode, and thus plays channels in order 1->2->3->4
+    #[arg(long, default_value_t = false)]
+    norandom: bool,
 
-
-   /// Output verbosity. You can use this option more than once.
-   #[clap(short, long, action = clap::ArgAction::Count)]
-   verbosity: u8,
+    /// Output verbosity. You can use this option more than once.
+    #[clap(short, long, action = clap::ArgAction::Count)]
+    verbosity: u8,
 
 }
 
@@ -146,7 +145,7 @@ impl Arguments {
             result.push_str("RSEED--");
         }
 
-        result.push_str(&self.channels.to_string());      result.push_str("LR-");
+        result.push_str(&self.channels.to_string());      result.push_str("out-");
         result.push_str(&self.samplerate.to_string());    result.push_str("Hz-");
         result.push_str(&self.secondsoutput.to_string()); result.push_str("s");
 
@@ -174,7 +173,10 @@ impl SampleGenerator {
             rng = ChaCha8Rng::seed_from_u64(args.randomseed.unwrap() as u64);
         }
         
-        let channelorder = (0..args.channels).collect();
+        let mut channelorder : Vec<u32> = (0..args.channels).collect();
+        if !args.norandom {
+            channelorder.shuffle(&mut rng);
+        }
 
         SampleGenerator {
             rng, 
@@ -208,10 +210,52 @@ impl SampleGenerator {
 
     }
 
+    fn next_sample(&mut self, args: &Arguments) {
+        self.sample += 1;
+
+        if self.curr_cycle(args) < self.cycle {
+            // we went back to cycle 0:
+            //   - regen random pattern
+            self.gen_channelorder(&args);
+        }
+
+        if self.curr_cycle(args) != self.cycle {
+            self.cyclestart = self.sample;
+
+            if args.verbosity > 2 {
+                println!(" Cycle #{} at {}", self.curr_cycle(args), self.sample)
+            }
+        }
+
+        self.cycle = self.curr_cycle(args);
+
+    }
+
+    /// Returns the current cycle (in range 0..args.channels)
+    fn curr_cycle(&mut self, args: &Arguments) -> i64{
+        ( self.sample * 1_000 * i64::from(args.channels) / args.samplerate / args.cycleperiod ) % i64::from(args.channels)
+    }
 
     /// Returns current sample for channel
     fn sample(&mut self, args: &Arguments, channel: u32) -> f64 {
-        0.0
+        let active_channel = self.channelorder[self.cycle as usize];
+
+        if channel != active_channel {
+            return 0.0;
+        }
+
+
+        let cycle_active_time = args.stimperiod * args.samplerate / 1000;
+
+        let rel_sample = self.sample - self.cyclestart; 
+
+        if rel_sample > cycle_active_time {
+            return 0.0;
+        }
+
+        let arg = rel_sample * args.stimfreq * 2;
+        (arg as f64 * PI / args.samplerate as f64).sin()
+
     }
 
     /// Returns whether channel is currently pauzed
@@ -269,6 +313,8 @@ fn main() {
             }
         }
         flac_encoder.process_interleaved(&next_sample,1).unwrap();
+
+        sg.next_sample(&args);
     }
 
 }
