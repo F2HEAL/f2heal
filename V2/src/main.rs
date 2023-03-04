@@ -27,7 +27,7 @@ struct Arguments {
 
     /// Duration of the finger stimulation in ms
     #[arg(long, default_value_t = 100)]
-    stimperiod : i64,
+    stimduration : i64,
 
     /// Duration of one cycle (stimulation of all fingers)
     #[arg(long, default_value_t = 888)]
@@ -71,7 +71,7 @@ impl Arguments {
 
         // Do the stimulation frequency en period match, otherwise said, does the stimulation sine
         // end on period end
-        let stimfreq_frame = 1000 / self.stimperiod;
+        let stimfreq_frame = 1000 / self.stimduration;
         let smooth_stim_badend = (self.stimfreq % stimfreq_frame) != 0;
 
         if smooth_stim_badend {
@@ -79,7 +79,7 @@ impl Arguments {
                 format!("WARNING: Stimulation period and frequency do not match!").red().bold());
         }
 
-        if self.stimperiod * self.channels as i64 > self.cycleperiod {
+        if self.stimduration * self.channels as i64 > self.cycleperiod {
             println!("\n{}",
                 format!("WARNING: overlapping stimulation periods not supported!").red().bold());
         }
@@ -102,7 +102,7 @@ impl Arguments {
         println!("");
         println!("   Stimulation details:");
         println!("     Stimulation Frequency : {}Hz", self.stimfreq);
-        println!("     Stimulation Period    : {}ms", self.stimperiod);
+        println!("     Stimulation Duration  : {}ms", self.stimduration);
         println!("     Cycle Period          : {}ms", self.cycleperiod);
         println!("");
 
@@ -125,7 +125,7 @@ impl Arguments {
         let mut result: String = "output/Sine-Interleaved--".to_owned();
 
         result.push_str(&self.stimfreq.to_string());    result.push_str("SFREQ-");
-        result.push_str(&self.stimperiod.to_string());  result.push_str("SPER-");
+        result.push_str(&self.stimduration.to_string());  result.push_str("SPER-");
         result.push_str(&self.cycleperiod.to_string()); result.push_str("CPER-");
 
         if !self.pauzes.is_empty() {
@@ -308,7 +308,7 @@ impl SampleGenerator {
         }
 
 
-        let cycle_active_time = args.stimperiod * args.samplerate / 1000;
+        let cycle_active_time = args.stimduration * args.samplerate / 1000;
 
         let rel_sample = self.sample - self.cyclestart; 
 
@@ -361,18 +361,15 @@ fn main() {
     sg.gen_channelorder(&args);
 
     for _ in 0..samples_to_go {
-        //let mut next_sample = Vec::default();
         let mut next_sample = vec![0; args.channels as usize];
 
         for channel in 0..args.channels {
             if sg.in_pauze(&args) {
-                //next_sample.push(0);
                 next_sample[channel as usize] = 0;
             } else {
                 let sample = sg.sample(&args, channel);
                 let amplitude = i16::MAX as f64;
 
-                //next_sample.push((sample * amplitude) as i32);
                 next_sample[channel as usize] = (sample * amplitude) as i32;
 
             }
