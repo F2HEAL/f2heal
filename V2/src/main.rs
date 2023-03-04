@@ -96,7 +96,7 @@ impl Arguments {
 
     fn display_config(&self) {
         println!("Generating Blocked/Interleaved FLAC output for:");
-        println!("   Channels [L/R]          : {}", self.channels);
+        println!("   Channels                : {}", self.channels);
         println!("   Sample Rate             : {}Hz", self.samplerate);
         println!("   Duration                : {}s", self.secondsoutput);
         println!("");
@@ -214,9 +214,6 @@ impl SampleGenerator {
             //let jitter_max_samples = 2 * args.jitter.unwrap() * args.cycleperiod * args.samplerate / 1000 / 8 / 100;
             let jitter_max_samples = 2 * args.jitter.unwrap() * args.cycleperiod * args.samplerate / 1000 / (2 * args.channels as i64) / 100;
             
-
-
-
             // no jitter on first channel
             for c in 1..args.channels as usize {
                 self.jdelay[c] = self.rng.gen_range(0..jitter_max_samples) - jitter_max_samples / 2;
@@ -363,20 +360,21 @@ fn main() {
     let mut sg = SampleGenerator::new(&args);
     sg.gen_channelorder(&args);
 
-    println!("SampleGenerator: {:?}", sg);
-
     for _ in 0..samples_to_go {
-        let mut next_sample = Vec::default();
+        //let mut next_sample = Vec::default();
+        let mut next_sample = vec![0; args.channels as usize];
 
         for channel in 0..args.channels {
             if sg.in_pauze(&args) {
-                next_sample.push(0);
+                //next_sample.push(0);
+                next_sample[channel as usize] = 0;
             } else {
                 let sample = sg.sample(&args, channel);
                 let amplitude = i16::MAX as f64;
 
-                next_sample.push((sample * amplitude) as i32);
-        
+                //next_sample.push((sample * amplitude) as i32);
+                next_sample[channel as usize] = (sample * amplitude) as i32;
+
             }
         }
         flac_encoder.process_interleaved(&next_sample,1).unwrap();
