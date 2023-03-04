@@ -101,19 +101,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "f2heal-v1"
+name = "f2heal"
 version = "0.2.0"
-dependencies = [
- "clap",
- "colored",
- "flac-bound",
- "rand",
- "rand_chacha",
-]
-
-[[package]]
-name = "f2heal-v2"
-version = "0.0.1"
 dependencies = [
  "clap",
  "colored",

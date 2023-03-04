@@ -1,0 +1,11 @@
+[package]
+name = "f2heal-v2"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+rand = "0.8.5"
+rand_chacha = "0.3.1"
+clap = { version = "4.1.8", features = ["derive"] }
+colored = "2.0.0"
+flac-bound = "0.3.0"

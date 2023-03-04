@@ -63,6 +63,7 @@ struct Arguments {
     #[arg(long)]
     randomseed: Option<i64>,
 
+    /// Disable randomization of channels in blocked mode, and thus plays channels in order 1->2->3->4
     #[arg(long, default_value_t = false)]
     norandom: bool,
 
@@ -112,6 +113,17 @@ impl Arguments {
                 );
             }
         }
+
+        // norandom only in blocked mode
+        if !self.phaseshift.is_none() || self.fixedphaseshift {
+            if self.norandom {
+                println!("\n{}",
+                format!("ERROR: Conflicting command line options, norandom only applicable in blocked mode.").red().bold());
+                assert_eq!(self.norandom, false, "!!!ERROR: Conflict in command line");
+                }    
+            }
+    
+    
 
         if !self.phaseshift.is_none() && self.fixedphaseshift {
             println!("\n{}",
