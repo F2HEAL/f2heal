@@ -33,6 +33,11 @@ struct Arguments {
     #[arg(long, default_value_t = 888)]
     cycleperiod : i64,
 
+    /// Apply jitter J for in blocked mode. J is % of 1/8th of cycleperiod so that, apart from first channel, 
+    /// every start is delayed over ] s0 - J * cycleperiod / 8 , s0 + J * cycleperiod / 8 [ (from a uniform distribution)
+    #[arg(short, long)]
+    jitter: Option<i64>,
+
     /// Duration (in cycles) of one pauze-cycle
     #[arg(long, default_value_t = 5)]
     pauzecycleperiod : i64,
@@ -117,7 +122,7 @@ impl Arguments {
 
     /// Set filename with all parameters included
     fn construct_fname(&self) -> String {
-        let mut result: String = "output/Sine-Blocked".to_owned();
+        let mut result: String = "output/Sine-Interleaved--".to_owned();
 
         result.push_str(&self.stimfreq.to_string());    result.push_str("SFREQ-");
         result.push_str(&self.stimperiod.to_string());  result.push_str("SPER-");
@@ -162,6 +167,7 @@ struct SampleGenerator {
     cycle: i64,
     cyclestart: i64,
     channelorder : Vec<u32>,
+    jdelay: Vec<i64>,
 }
 
 impl SampleGenerator {
@@ -173,17 +179,17 @@ impl SampleGenerator {
             rng = ChaCha8Rng::seed_from_u64(args.randomseed.unwrap() as u64);
         }
         
-        let mut channelorder : Vec<u32> = (0..args.channels).collect();
-        if !args.norandom {
-            channelorder.shuffle(&mut rng);
-        }
+        let channelorder : Vec<u32> = (0..args.channels).collect();
+        
+        let jdelay = vec![0;args.channels as usize];
 
         SampleGenerator {
             rng, 
             sample: 0, 
             cycle: 0, 
             cyclestart: 0,
-            channelorder
+            channelorder,
+            jdelay,
         }
     }
 
@@ -201,39 +207,99 @@ impl SampleGenerator {
                 }
             }
         }
-
         self.channelorder = channelorder;
     
+        if !args.jitter.is_none() {
+            // 2 * => ] s0 - J * cycleperiod / 8 , s0 + J * cycleperiod / 8 [
+            //let jitter_max_samples = 2 * args.jitter.unwrap() * args.cycleperiod * args.samplerate / 1000 / 8 / 100;
+            let jitter_max_samples = 2 * args.jitter.unwrap() * args.cycleperiod * args.samplerate / 1000 / (2 * args.channels as i64) / 100;
+            
+
+
+
+            // no jitter on first channel
+            for c in 1..args.channels as usize {
+                self.jdelay[c] = self.rng.gen_range(0..jitter_max_samples) - jitter_max_samples / 2;
+            }
+        }
+         
         if args.verbosity > 1 {
-            println!(" * New Channel Order: {:?}", self.channelorder[0]);
+            if args.jitter.is_none() {
+                println!(" * New Channel Order: {:?}", self.channelorder);
+            } else {
+                println!(" * New Channel Order: {:?} - Jitter in samples: {:?}", 
+                    self.channelorder, 
+                    self.jdelay);
+            }
         }
 
     }
 
     fn next_sample(&mut self, args: &Arguments) {
         self.sample += 1;
-
+        
         if self.curr_cycle(args) < self.cycle {
             // we went back to cycle 0:
             //   - regen random pattern
             self.gen_channelorder(&args);
         }
-
+        
         if self.curr_cycle(args) != self.cycle {
             self.cyclestart = self.sample;
-
+            
             if args.verbosity > 2 {
                 println!(" Cycle #{} at {}", self.curr_cycle(args), self.sample)
             }
         }
-
+        
         self.cycle = self.curr_cycle(args);
-
     }
 
     /// Returns the current cycle (in range 0..args.channels)
     fn curr_cycle(&mut self, args: &Arguments) -> i64{
-        ( self.sample * 1_000 * i64::from(args.channels) / args.samplerate / args.cycleperiod ) % i64::from(args.channels)
+        if args.verbosity > 2 {
+            let nojit_channel = ( self.sample * 1_000 * i64::from(args.channels) / args.samplerate / args.cycleperiod ) % i64::from(args.channels);
+            
+            let mut jit_channel1 = -1;
+            if nojit_channel  < args.channels as i64 - 1 {
+                jit_channel1 = (( self.sample - self.jdelay[(nojit_channel+1) as usize]) * 1_000 * i64::from(args.channels) / args.samplerate / args.cycleperiod ) % i64::from(args.channels);
+            }
+            
+            let mut jit_channel2 = -1;
+            if nojit_channel > 0 {            
+                jit_channel2 = ((self.sample - self.jdelay[nojit_channel as usize]) * 1_000 * i64::from(args.channels) / args.samplerate / args.cycleperiod ) % i64::from(args.channels);
+            }
+
+            println!("CC Sample:{} nojit:{} jit1:{} jit2:{}", self.sample, nojit_channel, jit_channel1, jit_channel2);
+        }
+
+
+
+        if args.jitter.is_none() {
+            ( self.sample * 1_000 * i64::from(args.channels) / args.samplerate / args.cycleperiod ) % i64::from(args.channels)
+        } else {
+            let nojit_channel = ( self.sample * 1_000 * i64::from(args.channels) / args.samplerate / args.cycleperiod ) % i64::from(args.channels);
+
+            // do we need to prestart next channel?
+            if nojit_channel  < args.channels as i64 - 1 && self.jdelay[(nojit_channel+1) as usize] < 0 {
+                let jit_channel = ( (self.sample - self.jdelay[(nojit_channel+1) as usize]) * 1_000 * i64::from(args.channels) / args.samplerate / args.cycleperiod ) % i64::from(args.channels);
+
+                if jit_channel > nojit_channel {
+                    return jit_channel;
+                }
+            }
+
+            // do we need to delay next channel?
+            if nojit_channel > 0 && self.jdelay[nojit_channel as usize] > 0 {
+                let jit_channel = ( (self.sample - self.jdelay[nojit_channel as usize]) * 1_000 * i64::from(args.channels) / args.samplerate / args.cycleperiod ) % i64::from(args.channels);
+                
+                if jit_channel < nojit_channel {
+                    return jit_channel;
+                }
+            }
+
+           nojit_channel
+        }
     }
 
     /// Returns current sample for channel
@@ -295,6 +361,7 @@ fn main() {
 
 
     let mut sg = SampleGenerator::new(&args);
+    sg.gen_channelorder(&args);
 
     println!("SampleGenerator: {:?}", sg);
 

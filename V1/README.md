@@ -13,7 +13,7 @@ Please refer to the Doc folder for more details
 
 ## Usage
 
-Create an **output/** directory from the current workind directory
+Go to the **V1** directory and create an **output/** directory
 
     $ cargo run -- -h
 
