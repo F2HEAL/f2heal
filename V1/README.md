@@ -13,7 +13,9 @@ Please refer to the Doc folder for more details
 
 ## Usage
 
-Go to the **V1** directory and create an **output/** directory
+Go to the **V1** directory and create an **output/** directory.
+
+To see the the command line options
 
     $ cargo run -- -h
 
@@ -21,5 +23,10 @@ Go to the **V1** directory and create an **output/** directory
 Generate 2 minute file with default settings
 
     $ cargo run -r -- -s120 -v
-    
+
+Please read [this page](https://crates.io/crates/flac-bound) if you get the following compilation error:
+
+    = note: /usr/bin/ld: cannot find -lflac: No such file or directory
+
+
     
